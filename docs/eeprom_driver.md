@@ -43,6 +43,7 @@ Module           | Equivalent `#define`            | Source
 -----------------|---------------------------------|------------------------------------------
 CAT24C512 EEPROM | `#define EEPROM_I2C_CAT24C512`  | <https://www.sparkfun.com/products/14764>
 RM24C512C EEPROM | `#define EEPROM_I2C_RM24C512C`  | <https://www.sparkfun.com/products/14764>
+24LC08B EEPROM   | `#define EEPROM_I2C_24LC08B`    | <https://www.microchip.com/en-us/product/24LC08B>
 24LC64 EEPROM    | `#define EEPROM_I2C_24LC64`     | <https://www.microchip.com/wwwproducts/en/24LC64>
 24LC128 EEPROM   | `#define EEPROM_I2C_24LC128`    | <https://www.microchip.com/wwwproducts/en/24LC128>
 24LC256 EEPROM   | `#define EEPROM_I2C_24LC256`    | <https://www.sparkfun.com/products/525>
