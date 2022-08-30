@@ -349,10 +349,14 @@ SHARED_CFLAGS = -fomit-frame-pointer \
                 -ffunction-sections \
                 -fdata-sections \
                 -fno-common \
-                -fshort-wchar
+                -fshort-wchar \
+                -fno-builtin-printf
+
+LDSCRIPT_PATH := $(shell dirname "$(LDSCRIPT)")
 
 # Shared Linker flags for all toolchains
 SHARED_LDFLAGS = -T $(LDSCRIPT) \
+                 -L $(LDSCRIPT_PATH) \
                  -Wl,--gc-sections \
                  -nostartfiles
 
