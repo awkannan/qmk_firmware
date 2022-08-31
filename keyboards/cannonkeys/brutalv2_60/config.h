@@ -49,6 +49,8 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define LED_CAPS_LOCK_PIN GP12
 #define LED_PIN_ON_STATE 0
 
+#define PICO_XOSC_STARTUP_DELAY_MULTIPLIER 64
+
 #define I2C1_SDA_PIN GP0
 #define I2C1_SCL_PIN GP1
 #define I2C_DRIVER I2CD1

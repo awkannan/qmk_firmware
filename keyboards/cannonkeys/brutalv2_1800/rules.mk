@@ -11,7 +11,7 @@ EXTRAKEY_ENABLE = yes	# Audio control and System control
 CONSOLE_ENABLE = yes	# Console for debug
 COMMAND_ENABLE = yes    # Commands for debug and configuration
 NKRO_ENABLE = yes           # Enable N-Key Rollover
-EEPROM_DRIVER = i2c     #i2c driver for eeprom
+EEPROM_DRIVER = i2c
 
 # Enter lower-power sleep mode when on the ChibiOS idle thread
 OPT_DEFS += -DCORTEX_ENABLE_WFI_IDLE=TRUE

@@ -66,6 +66,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define EXTERNAL_EEPROM_ADDRESS_SIZE 1
 
 #define DYNAMIC_KEYMAP_LAYER_COUNT 3
+#define PICO_XOSC_STARTUP_DELAY_MULTIPLIER 64
 
 /*
  * Feature disable options

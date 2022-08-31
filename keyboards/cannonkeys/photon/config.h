@@ -71,6 +71,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define RGBLIGHT_EFFECT_STATIC_GRADIENT
 #define RGBLIGHT_EFFECT_RAINBOW_SWIRL
 
+#define PICO_XOSC_STARTUP_DELAY_MULTIPLIER 64
+
+
+
 /*
  * Feature disable options
  *  These options are also useful to firmware size reduction.
