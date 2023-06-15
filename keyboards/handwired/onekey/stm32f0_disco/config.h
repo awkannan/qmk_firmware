@@ -22,3 +22,13 @@
 #define BACKLIGHT_PAL_MODE    0
 
 #define ADC_PIN A0
+
+#define SERIAL_DRIVER SD2
+#define SD1_TX_PIN A2
+#define SD1_TX_PAL_MODE	1
+#define SD1_RX_PIN A3
+#define SD1_RX_PAL_MODE	1
+#define SD1_CTS_PIN A0
+#define SD1_CTS_PAL_MODE 1
+#define SD1_RTS_PIN A1
+#define SD1_RTS_PAL_MODE 1	
