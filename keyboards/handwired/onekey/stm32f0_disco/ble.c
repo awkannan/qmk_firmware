@@ -74,6 +74,11 @@ static void bluefruit_serial_send(uint8_t data)
 
 void bluetooth_init(void) {
     usart_init();
+
+    send_str(PSTR("ATE=0"));
+    send_str(PSTR("AT+GAPDEVNAME=TESTKB"));
+    send_str(PSTR("AT+BLEHIDEN=1"));
+    send_str(PSTR("ATZ"));
 }
 
 void bluetooth_task(void) {}

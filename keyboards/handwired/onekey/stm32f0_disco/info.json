@@ -15,5 +15,8 @@
     "apa102": {
         "data_pin": "B15",
         "clock_pin": "B13"
+    },
+    "features": {
+        "console": true  
     }
 }
