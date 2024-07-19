@@ -4,6 +4,11 @@
 #include "satisfaction_core.h"
 #include <stdio.h>
 
+#ifdef BONGO_ENABLE
+#include "bongo.h"
+#endif
+
+
 void draw_default(void);
 void draw_clock(void);
 
@@ -29,6 +34,14 @@ bool oled_task_kb(void) {
         case OLED_TIME:
             draw_clock();
             break;
+        #ifdef BONGO_ENABLE
+        case OLED_BONGO:
+            draw_bongo(false);
+            break;
+        case OLED_BONGO_MIN:
+            draw_bongo(true);
+            break;
+        #endif
     }
     return false;
 }
