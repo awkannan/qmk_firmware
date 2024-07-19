@@ -44,6 +44,10 @@ enum custom_encoder_behavior {
 enum oled_modes {
   OLED_DEFAULT,
   OLED_TIME,
+#ifdef BONGO_ENABLE
+  OLED_BONGO,
+  OLED_BONGO_MIN,
+#endif
   OLED_OFF,
   _NUM_OLED_MODES
 };
