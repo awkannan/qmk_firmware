@@ -13,7 +13,7 @@
         "cols": ["C13", "C14", "C15", "F0", "F1", "A0", "A1", "A2", "B9", "B8", "B7", "B6", "B5", "B4", "B1", "B2", "B10", "B11"]
     },
     "rgblight": {
-        "led_count": 20,
+        "led_count": 3,
         "animations": {
             "breathing": true,
             "rainbow_mood": true,
