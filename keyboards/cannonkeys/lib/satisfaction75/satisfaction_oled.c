@@ -22,7 +22,7 @@ void draw_clock(void);
 #ifdef OLED_ENABLE
 #include "oled_driver.h"
 
-oled_rotation_t oled_init_kb(oled_rotation_t rotation) { return OLED_ROTATION_0; }
+oled_rotation_t oled_init_kb(oled_rotation_t rotation) { return OLED_ROTATION_90; }
 
 bool oled_task_kb(void) {
     if (!oled_task_user()) { return false; }
