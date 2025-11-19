@@ -78,7 +78,10 @@ bool oled_task_needs_to_repaint(void) {
     if ((oled_mode == OLED_OFF) && !clock_set_mode) {
         oled_wakeup_requested = false;
         oled_repaint_requested = false;
-        oled_off();
+        if(!oled_off()){
+            wait_ms(300);
+            oled_off();
+        }
         return false;
     }
 
@@ -87,7 +90,10 @@ bool oled_task_needs_to_repaint(void) {
         oled_wakeup_requested = false;
         oled_repaint_requested = false;
         oled_sleep_timer = timer_read32() + CUSTOM_OLED_TIMEOUT;
-        oled_on();
+        if(!oled_on()){
+            wait_ms(3000);
+            oled_on();
+        }
         return true;
     }
 
@@ -106,7 +112,10 @@ bool oled_task_needs_to_repaint(void) {
 
     // If the sleep timer has expired while the OLED was on, turn the OLED off.
     if (timer_expired32(timer_read32(), oled_sleep_timer)) {
-        oled_off();
+        if(!oled_off()){
+            wait_ms(200);
+            oled_off();
+        }
         return false;
     }
 

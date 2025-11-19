@@ -204,7 +204,6 @@ __attribute__((weak)) bool oled_send_cmd(const uint8_t *data, uint16_t size) {
     return true;
 #elif defined(OLED_TRANSPORT_I2C)
     i2c_status_t status = i2c_transmit((OLED_DISPLAY_ADDRESS << 1), data, size, OLED_I2C_TIMEOUT);
-
     return (status == I2C_STATUS_SUCCESS);
 #endif
 }
@@ -753,7 +752,7 @@ bool oled_on(void) {
     if (!oled_active) {
         if (!oled_send_cmd_P(display_on, ARRAY_SIZE(display_on))) {
             print("oled_on cmd failed\n");
-            return oled_active;
+            return false;
         }
         oled_active = true;
     }
@@ -775,7 +774,7 @@ bool oled_off(void) {
     if (oled_active) {
         if (!oled_send_cmd_P(display_off, ARRAY_SIZE(display_off))) {
             print("oled_off cmd failed\n");
-            return oled_active;
+            return false;
         }
         oled_active = false;
     }

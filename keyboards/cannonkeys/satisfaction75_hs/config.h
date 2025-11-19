@@ -17,11 +17,22 @@
 #define I2C1_SDA_PIN B7
 #define I2C1_SCL_PAL_MODE 1
 #define I2C1_SDA_PAL_MODE 1
+
+// Fast
 #define I2C1_TIMINGR_PRESC 0x00U
-#define I2C1_TIMINGR_SCLDEL 0x03U
-#define I2C1_TIMINGR_SDADEL 0x01U
-#define I2C1_TIMINGR_SCLH 0x03U
-#define I2C1_TIMINGR_SCLL 0x09U
+#define I2C1_TIMINGR_SCLDEL 0x01U
+#define I2C1_TIMINGR_SDADEL 0x00U
+#define I2C1_TIMINGR_SCLH 0x02U
+#define I2C1_TIMINGR_SCLL 0x0BU
+
+// Default from before
+// #define I2C1_TIMINGR_PRESC 0x00U
+// #define I2C1_TIMINGR_SCLDEL 0x03U
+// #define I2C1_TIMINGR_SDADEL 0x01U
+// #define I2C1_TIMINGR_SCLH 0x03U
+// #define I2C1_TIMINGR_SCLL 0x09U
+
+#define OLED_I2C_TIMEOUT 500
 
 // configure oled driver for the 128x32 oled
 #define OLED_UPDATE_INTERVAL 66 // ~15fps

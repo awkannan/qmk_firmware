@@ -29,6 +29,7 @@
 #include "i2c_master.h"
 #include "gpio.h"
 #include "chibios_config.h"
+#include "print.h"
 #include <ch.h>
 #include <hal.h>
 
@@ -119,6 +120,10 @@ static i2c_status_t i2c_epilogue(const msg_t status) {
     if (status == MSG_OK) {
         return I2C_STATUS_SUCCESS;
     }
+
+    // print("i2c_epilogue status: ");print_hex32(status);print("\n");
+    // i2cflags_t flags = i2cGetErrors(&I2C_DRIVER);
+    // print("I2C error flags: ");print_hex32(flags);print("\n");
 
     // From ChibiOS HAL: "After a timeout the driver must be stopped and
     // restarted because the bus is in an uncertain state." We also issue that
