@@ -1,6 +1,6 @@
 {
     "manufacturer": "CannonKeys",
-    "keyboard_name": "Satisfaction75 HS",
+    "keyboard_name": "Satisfaction75 Big HS",
     "maintainer": "awkannan",
     "bootloader": "stm32-dfu",
     "diode_direction": "COL2ROW",
@@ -29,7 +29,7 @@
     "processor": "STM32F072",
     "usb": {
         "device_version": "0.0.1",
-        "pid": "0x0011",
+        "pid": "0x003B",
         "vid": "0xCA04"
     },
     "layouts": {
