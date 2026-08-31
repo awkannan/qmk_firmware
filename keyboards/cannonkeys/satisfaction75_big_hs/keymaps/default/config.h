@@ -4,4 +4,3 @@
 #pragma once
 
 #define POMODORO_ENABLE
-#define BONGO_ENABLE
