@@ -12,6 +12,10 @@
 #include "progmem.h"
 #include <stdio.h>
 
+#ifdef WPM_ENABLE
+#    include "wpm.h"
+#endif
+
 #include "satisfaction_bongo.h"
 
 #include "satisfaction_pomodoro.h"
@@ -469,13 +473,19 @@ static void draw_status_row(void) {
 // "HH:MM" for the seven-segment clock.  In 12 hour mode a leading zero is
 // blanked rather than dropped, so the digits keep their positions.
 static void build_clock_digits(char *buf, size_t len) {
-    uint8_t  hour   = last_minute / 60;
-    uint16_t minute = last_minute % 60;
+    uint8_t hour   = (uint8_t)(last_minute / 60);
+    uint8_t minute = (uint8_t)(last_minute % 60);
 
     if (encoder_mode == ENC_MODE_CLOCK_SET) {
-        hour   = hour_config;
-        minute = minute_config;
+        hour   = (uint8_t)hour_config;
+        minute = (uint8_t)minute_config;
     }
+
+    // The clock-set values are user editable and unbounded as far as the
+    // compiler is concerned, so clamp them: it keeps the formatted output
+    // inside buf, and lets -Wformat-truncation see that it does.
+    hour %= 24;
+    minute %= 60;
 
 #        ifndef SAT75_CLOCK_24H
     hour = hour % 12;
