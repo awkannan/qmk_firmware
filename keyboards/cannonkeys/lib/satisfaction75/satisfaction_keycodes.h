@@ -6,5 +6,7 @@
 enum my_keycodes {
   ENC_PRESS = QK_KB_0,
   CLOCK_SET,
-  OLED_TOGG
+  OLED_TOGG,
+  POMO_TOGG, // pomodoro: start / pause / acknowledge a finished phase
+  POMO_RST   // pomodoro: reload the current phase and pause
 };

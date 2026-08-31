@@ -10,6 +10,9 @@
 
 #include "via.h" // only for EEPROM address
 #include "satisfaction_keycodes.h"
+#include "satisfaction_oled.h" // canvas size, selects which OLED modes exist
+#include "satisfaction_bongo.h"
+#include "satisfaction_pomodoro.h"
 
 #define EEPROM_ENABLED_ENCODER_MODES_OFFSET 0
 #define EEPROM_DEFAULT_OLED_OFFSET 1
@@ -43,10 +46,17 @@ enum custom_encoder_behavior {
 
 enum oled_modes {
   OLED_DEFAULT,
+#ifdef SAT75_OLED_SMALL
+  // The large screen's default mode already shows the clock, so it has no
+  // separate time mode; clock_set_mode still gets its own editing screen.
   OLED_TIME,
-#ifdef BONGO_ENABLE
+#endif
+#ifdef SAT75_BONGO
   OLED_BONGO,
   OLED_BONGO_MIN,
+#endif
+#ifdef SAT75_POMODORO
+  OLED_POMODORO,
 #endif
   OLED_OFF,
   _NUM_OLED_MODES

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "satisfaction_core.h"
+#include "satisfaction_pomodoro.h"
 #include "print.h"
 #include "debug.h"
 #include "matrix.h"
@@ -79,7 +80,7 @@ void keyboard_post_init_kb(void) {
     #ifdef OLED_ENABLE
     if(!is_oled_on()){
         wait_ms(3000);
-        oled_init(OLED_ROTATION_0);
+        oled_init(SAT75_OLED_ROTATION);
     }
     #endif
 
@@ -255,6 +256,18 @@ bool process_record_kb(uint16_t keycode, keyrecord_t *record) {
         }
       }
       return false;
+#ifdef SAT75_POMODORO
+    case POMO_TOGG:
+      if (record->event.pressed) {
+        pomodoro_toggle();
+      }
+      return false;
+    case POMO_RST:
+      if (record->event.pressed) {
+        pomodoro_reset();
+      }
+      return false;
+#endif
     case ENC_PRESS:
       if (record->event.pressed) {
         uint16_t mapped_code = handle_encoder_press();
@@ -319,6 +332,12 @@ void custom_config_load(void){
 #ifdef DYNAMIC_KEYMAP_ENABLE
   read_custom_config(&oled_mode, EEPROM_DEFAULT_OLED_OFFSET, 1);
   read_custom_config(&enabled_encoder_modes, EEPROM_ENABLED_ENCODER_MODES_OFFSET, 1);
+  // Which modes exist depends on the screen size and on which optional screens
+  // are compiled in, so a byte saved by a different build can name a mode this
+  // one does not have.
+  if (oled_mode >= _NUM_OLED_MODES) {
+    oled_mode = OLED_DEFAULT;
+  }
 #endif
 }
 
@@ -364,4 +383,9 @@ void housekeeping_task_kb(void) {
     last_minute = minutes_since_midnight;
     oled_request_repaint();
   }
+
+#ifdef SAT75_POMODORO
+  // Runs regardless of which screen is showing; OLED_POMODORO is only a view.
+  pomodoro_task();
+#endif
 }
