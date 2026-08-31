@@ -102,16 +102,24 @@ moving rather than time passing, and slides the deadline instead.
 screen. `SAT75_POMODORO` and `SAT75_BONGO` are the derived macros every other
 file tests.
 
-## Open questions for the user
+## Settled defaults
 
-- `POMODORO_KEEP_OLED_AWAKE` defaults to **0**. Burn-in risk versus being able
-  to see the countdown during a break, when you are not typing to wake it.
-  Worth trying as-is first, then flipping if breaks feel blind.
-- `WPM_ENABLE` is on for `satisfaction75_big_hs:default` so the default screen's
-  WPM slot is populated. It was not previously enabled on that keymap.
-- The small screen has not been given a pomodoro keymap binding; only
-  `satisfaction75_big_hs` has `POMODORO_ENABLE`. The other boards can opt in
-  with one define.
+Reviewed and agreed with the board owner. Changeable, but they are decisions
+rather than leftovers -- do not re-open them without a reason.
+
+**`POMODORO_KEEP_OLED_AWAKE` is 0.** Holding a near-static image for a whole
+25 minute phase is a real burn-in risk on these panels, and typing keeps the
+screen awake by itself during a work phase. The gap is breaks, when you are not
+typing and the screen sleeps; phase boundaries wake it regardless. Flip to 1 if
+that proves annoying in practice.
+
+**`WPM_ENABLE` is on for `satisfaction75_big_hs:default`.** The default screen
+has a WPM slot and it would otherwise render empty. This keymap did not
+previously enable it, so it is a small new always-on cost.
+
+**Only `satisfaction75_big_hs` sets `POMODORO_ENABLE`.** The small boards can
+opt in with one define in a keymap config.h; they have not been given keycode
+bindings for it.
 
 ## File map
 
