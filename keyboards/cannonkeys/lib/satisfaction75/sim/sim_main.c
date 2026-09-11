@@ -39,12 +39,52 @@ static void sim_sync_rtc(void) {
     last_minute = last_timespec.millisecond / 1000 / 60;
 }
 
-static void frame(const char *title) {
+// One oled_task() pass, which only resets the cursor before calling in.
+static void repaint(void) {
     sim_sync_rtc();
     oled_request_wakeup();   // as if the user just touched the board
-    oled_clear();
+    oled_set_cursor(0, 0);
     oled_task_kb();
+}
+
+static void report_stale(void) {
+    uint16_t stale = sim_oled_stale_blocks();
+    if (stale) {
+        printf("STALE BLOCKS on panel: 0x%04x\n", stale);
+    }
+}
+
+static void frame(const char *title) {
+    repaint();
+    uint8_t sent = sim_oled_flush(OLED_BLOCK_COUNT);
+    report_stale();
     sim_oled_dump(title);
+    printf("blocks sent: %u/%u\n\n", sent, (unsigned)OLED_BLOCK_COUNT);
+}
+
+// The hardware bug: the driver sends one block per main loop pass, and on the
+// large panel a whole screen takes about as long as the 66ms repaint interval.
+// When every repaint marks every block dirty, the render restarts from block 0
+// each time and the last blocks are never sent.  Model that with a fixed budget
+// of blocks per repaint, switch screens, and check the panel converges.
+#define STARVED_BUDGET 12
+
+static void starved_switch_scenario(void) {
+    sim_reset();
+    oled_mode = OLED_DEFAULT;
+    frame("STARVED: default, fully sent");
+
+    clock_set_mode = true; // a static screen, so only the switch itself differs
+    for (int i = 0; i < 8; i++) {
+        repaint();
+        sim_oled_flush(STARVED_BUDGET);
+        sim_advance_ms(66);
+    }
+    printf("switched screens at %u blocks per repaint:\n", STARVED_BUDGET);
+    uint16_t stale = sim_oled_stale_blocks();
+    printf(stale ? "STALE BLOCKS on panel: 0x%04x\n" : "panel matches buffer\n", stale);
+    clock_set_mode = false;
+    printf("\n");
 }
 
 // Cross-checks s75_days_from_civil()/s75_day_of_week() against a reference.
@@ -232,6 +272,8 @@ int main(int argc, char **argv) {
 #ifdef POMODORO_ENABLE
     pomodoro_scenarios();
 #endif
+
+    starved_switch_scenario();
 
     return 0;
 }

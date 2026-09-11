@@ -9,6 +9,16 @@
 
 uint8_t  oled_buffer[SIM_MATRIX_SIZE];
 static uint8_t *oled_cursor = oled_buffer;
+
+// Dirty tracking follows the driver: oled_clear() marks everything, and each
+// write marks the blocks it touched only if their bytes changed.
+#define OLED_ALL_BLOCKS_MASK ((OLED_BLOCK_TYPE)~(OLED_BLOCK_TYPE)0)
+OLED_BLOCK_TYPE oled_dirty = 0;
+static uint8_t  sim_panel[SIM_MATRIX_SIZE];
+
+static void mark_dirty(uint16_t index) {
+    oled_dirty |= (OLED_BLOCK_TYPE)1 << (index / OLED_BLOCK_SIZE);
+}
 static bool     oled_active = true;
 
 static const uint16_t oled_rotation_width = SIM_CANVAS_WIDTH;
@@ -22,6 +32,7 @@ bool oled_init(oled_rotation_t rotation) {
 void oled_clear(void) {
     memset(oled_buffer, 0, sizeof(oled_buffer));
     oled_cursor = &oled_buffer[0];
+    oled_dirty  = OLED_ALL_BLOCKS_MASK;
 }
 
 void oled_set_cursor(uint8_t col, uint8_t line) {
@@ -80,6 +91,9 @@ void oled_write_char(const char data, bool invert) {
         return;
     }
 
+    uint8_t before[OLED_FONT_WIDTH];
+    memcpy(before, oled_cursor, OLED_FONT_WIDTH);
+
     uint8_t cast_data = (uint8_t)data;
     if (cast_data < OLED_FONT_START || cast_data > OLED_FONT_END) {
         memset(oled_cursor, 0x00, OLED_FONT_WIDTH);
@@ -88,6 +102,11 @@ void oled_write_char(const char data, bool invert) {
     }
     if (invert) {
         invert_character(oled_cursor);
+    }
+    if (memcmp(before, oled_cursor, OLED_FONT_WIDTH)) {
+        uint16_t index = oled_cursor - &oled_buffer[0];
+        mark_dirty(index);
+        mark_dirty(index + OLED_FONT_WIDTH - 1);
     }
     oled_advance_char();
 }
@@ -110,7 +129,9 @@ void oled_write_raw(const char *data, uint16_t size) {
         size = SIM_MATRIX_SIZE - start;
     }
     for (uint16_t i = 0; i < size; i++) {
+        if (oled_buffer[start + i] == (uint8_t)data[i]) continue;
         oled_buffer[start + i] = (uint8_t)data[i];
+        mark_dirty(start + i);
     }
 }
 
@@ -124,10 +145,15 @@ void oled_write_pixel(uint8_t x, uint8_t y, bool on) {
     if (index >= SIM_MATRIX_SIZE) {
         return;
     }
+    uint8_t data = oled_buffer[index];
     if (on) {
-        oled_buffer[index] |= (1 << (y % 8));
+        data |= (1 << (y % 8));
     } else {
-        oled_buffer[index] &= ~(1 << (y % 8));
+        data &= ~(1 << (y % 8));
+    }
+    if (oled_buffer[index] != data) {
+        oled_buffer[index] = data;
+        mark_dirty(index);
     }
 }
 
@@ -137,6 +163,33 @@ uint8_t oled_max_lines(void) { return SIM_CANVAS_HEIGHT / OLED_FONT_HEIGHT; }
 bool oled_on(void) { oled_active = true; return true; }
 bool oled_off(void) { oled_active = false; return true; }
 bool is_oled_on(void) { return oled_active; }
+
+oled_buffer_reader_t oled_read_raw(uint16_t start_index) {
+    if (start_index > SIM_MATRIX_SIZE) start_index = SIM_MATRIX_SIZE;
+    return (oled_buffer_reader_t){&oled_buffer[start_index], (uint16_t)(SIM_MATRIX_SIZE - start_index)};
+}
+
+uint8_t sim_oled_flush(uint8_t limit) {
+    uint8_t sent = 0;
+    for (uint8_t b = 0; b < OLED_BLOCK_COUNT && sent < limit; b++) {
+        if (oled_dirty & ((OLED_BLOCK_TYPE)1 << b)) {
+            memcpy(&sim_panel[b * OLED_BLOCK_SIZE], &oled_buffer[b * OLED_BLOCK_SIZE], OLED_BLOCK_SIZE);
+            oled_dirty &= ~((OLED_BLOCK_TYPE)1 << b);
+            sent++;
+        }
+    }
+    return sent;
+}
+
+uint16_t sim_oled_stale_blocks(void) {
+    uint16_t stale = 0;
+    for (uint8_t b = 0; b < OLED_BLOCK_COUNT; b++) {
+        if (memcmp(&sim_panel[b * OLED_BLOCK_SIZE], &oled_buffer[b * OLED_BLOCK_SIZE], OLED_BLOCK_SIZE)) {
+            stale |= (uint16_t)1 << b;
+        }
+    }
+    return stale;
+}
 
 void sim_oled_dump(const char *title) {
     printf("+- %s ", title);

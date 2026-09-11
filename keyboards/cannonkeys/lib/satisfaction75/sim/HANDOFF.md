@@ -46,17 +46,17 @@ Eleven combinations, all clean. Five boards -- keymaps live partly at the
 
 | Board | Keymap | Flash /128K | RAM /16K |
 |---|---|---|---|
-| satisfaction75/prototype | default | 39240  29.9% | 10128  61.8% |
-| satisfaction75/prototype | bongo   | 53300  40.7% | 10892  66.5% |
-| satisfaction75/rev1      | default | 39240  29.9% | 10128  61.8% |
-| satisfaction75/rev1      | bongo   | 53300  40.7% | 10892  66.5% |
+| satisfaction75/prototype | default | 39372  30.0% | 10640  64.9% |
+| satisfaction75/prototype | bongo   | 53432  40.8% | 11404  69.6% |
+| satisfaction75/rev1      | default | 39372  30.0% | 10640  64.9% |
+| satisfaction75/rev1      | bongo   | 53432  40.8% | 11404  69.6% |
 | satisfaction75/rev1      | tester  | 32360  24.7% |  9520  58.1% |
-| satisfaction75/rev2      | default | 39256  29.9% | 10128  61.8% |
-| satisfaction75/rev2      | bongo   | 52936  40.4% | 10892  66.5% |
-| satisfaction75_hs        | default | 38852  29.6% | 10400  63.5% |
-| satisfaction75_hs        | bongo   | 52324  39.9% | 11164  68.1% |
-| satisfaction75_big_hs    | default | 41452  31.6% | 11028  67.3% |
-| satisfaction75_big_hs    | bongo   | 51560  39.3% | 11724  71.6% |
+| satisfaction75/rev2      | default | 39388  30.1% | 10640  64.9% |
+| satisfaction75/rev2      | bongo   | 53068  40.5% | 11404  69.6% |
+| satisfaction75_hs        | default | 38984  29.7% | 10912  66.6% |
+| satisfaction75_hs        | bongo   | 52456  40.0% | 11676  71.3% |
+| satisfaction75_big_hs    | default | 41580  31.7% | 12052  73.6% |
+| satisfaction75_big_hs    | bongo   | 51688  39.4% | 12748  77.8% |
 
 Flash is `.vectors + .text + .rodata + .ARM.exidx + .data`; RAM is
 `.mstack + .pstack + .data + .bss`. Plain `arm-none-eabi-size` without `-A`
@@ -85,6 +85,18 @@ the real QMK headers. `satisfaction_oled.c` called `get_current_wpm()` with no
 and runs at `-O1`. `-Wformat-truncation` caught a `char[8]` that
 `"%02u:%02u"` could overrun, because `minute_config` is a user-editable
 `int16_t` that GCC cannot bound. Host gcc never flagged it.
+
+The first flash then found a third: **render bandwidth**. Every repaint
+starts from `oled_clear()`, which marks all 16 blocks dirty, and the driver
+sends one block per main loop pass, lowest first. On the SH1107 a 64-byte block
+is eight page-mode command+data pairs at ~400kHz, so a full screen takes about
+as long as the 66ms repaint interval. Each repaint re-dirtied block 0 before the
+tail was reached, so the bottom two text rows never updated and kept the
+previous screen. `repaint()` in `satisfaction_oled.c` now snapshots the buffer
+(1K on the large panel, 512 bytes on the small), redraws, and narrows
+`oled_dirty` to blocks that actually changed. The sim now models the dirty
+mask and the panel's own RAM, reports blocks sent per frame, and has a
+fixed-budget scenario that fails with `STALE BLOCKS ... 0xf000` on the old code.
 
 So: a green `make test` means the layouts and logic are right. It says nothing
 about includes, warnings, `rotate_90()`, the SH1107 command stream, I2C timing,
