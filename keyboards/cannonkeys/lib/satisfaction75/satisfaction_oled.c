@@ -11,6 +11,7 @@
 #include "host.h"
 #include "progmem.h"
 #include <stdio.h>
+#include <string.h>
 
 #ifdef WPM_ENABLE
 #    include "wpm.h"
@@ -51,17 +52,25 @@ oled_rotation_t oled_init_kb(oled_rotation_t rotation) {
     return SAT75_OLED_ROTATION;
 }
 
-bool oled_task_kb(void) {
-    if (!oled_task_user()) {
-        return false;
-    }
-    if (!oled_task_needs_to_repaint()) {
-        return false;
-    }
-    oled_clear();
+/*
+ * The driver's per-block dirty mask.  Not in oled_driver.h, but a plain global
+ * in oled_driver.c; keyboards/handwired/onekey's oled keymap reads it too.
+ *
+ * Every repaint starts from oled_clear(), which marks every block dirty.  The
+ * driver then sends one block per main loop pass, lowest index first.  On the
+ * 64x128 SH1107 a block is 64 bytes sent as eight page-mode command+data pairs
+ * over ~400kHz I2C, so the whole screen takes about as long as the 66ms repaint
+ * interval -- and the next repaint re-dirties block 0, so the last blocks (the
+ * bottom text row) can go unsent indefinitely, leaving the previous screen
+ * visible there.  repaint() below clears and redraws as before, then narrows
+ * the mask to the blocks whose bytes actually changed.
+ */
+extern OLED_BLOCK_TYPE oled_dirty;
+
+static void draw_screen(void) {
     if (clock_set_mode) {
         draw_clock();
-        return false;
+        return;
     }
     switch (oled_mode) {
         default:
@@ -87,6 +96,36 @@ bool oled_task_kb(void) {
             break;
 #    endif
     }
+}
+
+static void repaint(void) {
+    static uint8_t prev[OLED_MATRIX_SIZE];
+
+    const uint8_t *buf = oled_read_raw(0).current_element;
+    memcpy(prev, buf, sizeof(prev));
+    // Blocks still waiting to be sent from an earlier repaint must stay dirty
+    // even if this frame leaves them unchanged.
+    OLED_BLOCK_TYPE dirty = oled_dirty;
+
+    oled_clear();
+    draw_screen();
+
+    for (uint8_t b = 0; b < OLED_BLOCK_COUNT; b++) {
+        if (memcmp(&buf[b * OLED_BLOCK_SIZE], &prev[b * OLED_BLOCK_SIZE], OLED_BLOCK_SIZE)) {
+            dirty |= (OLED_BLOCK_TYPE)1 << b;
+        }
+    }
+    oled_dirty = dirty;
+}
+
+bool oled_task_kb(void) {
+    if (!oled_task_user()) {
+        return false;
+    }
+    if (!oled_task_needs_to_repaint()) {
+        return false;
+    }
+    repaint();
     return false;
 }
 
