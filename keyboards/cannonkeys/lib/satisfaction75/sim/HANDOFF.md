@@ -55,8 +55,8 @@ Eleven combinations, all clean. Five boards -- keymaps live partly at the
 | satisfaction75/rev2      | bongo   | 53068  40.5% | 11404  69.6% |
 | satisfaction75_hs        | default | 38984  29.7% | 10912  66.6% |
 | satisfaction75_hs        | bongo   | 52456  40.0% | 11676  71.3% |
-| satisfaction75_big_hs    | default | 41580  31.7% | 12052  73.6% |
-| satisfaction75_big_hs    | bongo   | 51688  39.4% | 12748  77.8% |
+| satisfaction75_big_hs    | default | 41712  31.8% | 12052  73.6% |
+| satisfaction75_big_hs    | bongo   | 51824  39.5% | 12748  77.8% |
 
 Flash is `.vectors + .text + .rodata + .ARM.exidx + .data`; RAM is
 `.mstack + .pstack + .data + .bss`. Plain `arm-none-eabi-size` without `-A`
@@ -116,10 +116,32 @@ and 128 tall, so every cursor column and pixel coordinate lands wrong. It is now
 **`SAT75_OLED_LARGE` is derived from `OLED_DISPLAY_64X128`**, the same macro the
 OLED driver keys off, so the layout and the panel config cannot drift apart.
 
-**The large screen has no `OLED_TIME` mode.** Its default screen carries a
-seven-segment clock, so `draw_clock()` there is purely the `clock_set_mode`
-field editor. This makes `enum oled_modes` differ by build -- already true of
-`BONGO_ENABLE` -- hence the `_NUM_OLED_MODES` clamp in `custom_config_load()`.
+**Both panels have an `OLED_TIME` mode**, and on both `draw_clock()` serves
+double duty: it is the browsable clock screen, and it is the `clock_set_mode`
+field editor, which only adds a title row and an underline under the field
+being edited. Keeping the two roles in one function is what stops the editor
+and the view from drifting apart.
+
+The large screen was briefly built without `OLED_TIME`, on the grounds that its
+default screen already showed the time. That was the wrong trade: it forced the
+default screen to carry a full size clock *and* everything else, and the panel
+read as cramped. The clock now appears at two sizes -- 22x32 digits on the
+dedicated screen, 18x24 on the default screen -- which is what frees the gutter
+above and below it. `CLK_SM_DIGIT_*` in `satisfaction_oled.c` is the dial if
+the small one wants to be smaller still.
+
+`enum oled_modes` still differs by build, because of `BONGO_ENABLE` and
+`POMODORO_ENABLE`; hence the `_NUM_OLED_MODES` clamp in `custom_config_load()`.
+Note that re-adding `OLED_TIME` shifted every later mode index by one on the
+large panel, so a board flashed with the earlier firmware comes back on a
+different screen than it was left. Harmless -- one encoder press fixes it, and
+the clamp catches anything out of range.
+
+**The large default screen drops the year from the date** (`MON 08-31` rather
+than `MON 2026-08-31`), and centres it over the mod flags / WPM row. The full
+date is on `OLED_TIME`, which also needs it,
+because `clock_set_mode` has to underline the year. `draw_date_text()` takes a
+`with_year` flag for exactly this.
 
 **Bongo art.** The two panels get different drawings; a 128x32 crop of the large
 cat is not recognisable. Large `prep` aliases `idle[0]` because the upstream
