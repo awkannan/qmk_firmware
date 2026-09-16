@@ -46,11 +46,10 @@ enum custom_encoder_behavior {
 
 enum oled_modes {
   OLED_DEFAULT,
-#ifdef SAT75_OLED_SMALL
-  // The large screen's default mode already shows the clock, so it has no
-  // separate time mode; clock_set_mode still gets its own editing screen.
+  // A clock-only screen: big time, full date, and nothing else.  Both panels
+  // have one.  clock_set_mode renders the same screen with the field being
+  // edited underlined, so browsing and setting never drift apart.
   OLED_TIME,
-#endif
 #ifdef SAT75_BONGO
   OLED_BONGO,
   OLED_BONGO_MIN,

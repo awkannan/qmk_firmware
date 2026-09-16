@@ -245,10 +245,9 @@ int main(int argc, char **argv) {
 
     sim_reset();
     encoder_mode = ENC_MODE_VOLUME;
-#ifdef SAT75_OLED_SMALL
     oled_mode = OLED_TIME;
     frame("TIME");
-#endif
+    oled_mode = OLED_DEFAULT;
 
     sim_set_leds(false, true, false);
     clock_set_mode = true;

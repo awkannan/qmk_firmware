@@ -77,11 +77,9 @@ static void draw_screen(void) {
         case OLED_DEFAULT:
             draw_default();
             break;
-#    ifdef SAT75_OLED_SMALL
         case OLED_TIME:
             draw_clock();
             break;
-#    endif
 #    ifdef SAT75_BONGO
         case OLED_BONGO:
             draw_bongo(false);
@@ -466,9 +464,18 @@ void draw_clock(void) {
 
 #    else // SAT75_OLED_LARGE
 
+// The dedicated clock screen (OLED_TIME / clock_set_mode) gets the full size
+// digits; they run nearly the whole width of the panel.
 #        define CLK_DIGIT_W 22
 #        define CLK_DIGIT_H 32
 #        define CLK_THICK 4
+
+// The default screen's clock is deliberately smaller.  It shares the panel
+// with six other fields, and shrinking it from 32px to 24px is what buys the
+// gutter above and below -- the 21x8 grid has no spare row otherwise.
+#        define CLK_SM_DIGIT_W 18
+#        define CLK_SM_DIGIT_H 24
+#        define CLK_SM_THICK 3
 
 // Matrix activity display, one SAT75_MTX_SCALE-sized block per key.
 #        define MTX_BOX_W (MATRIX_COLS * SAT75_MTX_SCALE + 2)
@@ -492,21 +499,23 @@ static void draw_matrix_display(uint8_t x, uint8_t y) {
     s75_draw_line_h(x + 1 + 12 * SAT75_MTX_SCALE, y + 2, 3 * SAT75_MTX_SCALE);
 }
 
-// "LAYER n  ENC MMM     CAP", with the layer and encoder mode inverted.  The
-// two vertical rules close the right hand edge of those inverted blocks, which
-// the 6x8 font leaves open.
+// "LAYER n  ENC MMM  CAP", with the layer and encoder mode inverted.  ENC
+// starts at column 9 so the gaps either side of it are both two characters.
+// The two vertical rules close the left hand edge of the inverted blocks,
+// which the 6x8 font leaves open.
 static void draw_status_row(void) {
     oled_write_P(PSTR("LAYER "), false);
     oled_write_char(get_highest_layer(layer_state) + 0x30, true);
 
-    oled_write_P(PSTR(" ENC "), false);
+    oled_set_cursor(9, 0);
+    oled_write_P(PSTR("ENC "), false);
     oled_write(s75_get_enc_mode(), true);
 
     oled_set_cursor(18, 0);
     oled_write_P(PSTR("CAP"), host_keyboard_led_state().caps_lock);
 
     s75_draw_line_v(35, 0, 8);
-    s75_draw_line_v(71, 0, 8);
+    s75_draw_line_v(77, 0, 8);
 }
 
 // "HH:MM" for the seven-segment clock.  In 12 hour mode a leading zero is
@@ -549,8 +558,8 @@ static bool clock_is_pm(void) {
 #        endif
 
 // x of the clock block, centred in whatever is left after the am/pm column.
-static uint8_t clock_origin_x(const char *digits) {
-    uint8_t w = s75_7seg_width(digits, CLK_DIGIT_W, CLK_THICK);
+static uint8_t clock_origin_x(const char *digits, uint8_t digit_w, uint8_t thickness) {
+    uint8_t w = s75_7seg_width(digits, digit_w, thickness);
 #        ifdef SAT75_CLOCK_24H
     uint8_t avail = SAT75_CANVAS_WIDTH;
 #        else
@@ -559,22 +568,25 @@ static uint8_t clock_origin_x(const char *digits) {
     return w >= avail ? 0 : (uint8_t)((avail - w) / 2);
 }
 
-static void draw_big_clock(uint8_t y) {
+static void draw_big_clock(uint8_t y, uint8_t digit_w, uint8_t digit_h, uint8_t thickness) {
     char digits[8];
     build_clock_digits(digits, sizeof(digits));
 
-    s75_draw_7seg(digits, clock_origin_x(digits), y, CLK_DIGIT_W, CLK_DIGIT_H, CLK_THICK);
+    s75_draw_7seg(digits, clock_origin_x(digits, digit_w, thickness), y, digit_w, digit_h, thickness);
 
 #        ifndef SAT75_CLOCK_24H
     // Sits on the same baseline as the bottom of the digits.
-    oled_set_cursor(19, (uint8_t)((y + CLK_DIGIT_H - 8) / 8));
+    oled_set_cursor(19, (uint8_t)((y + digit_h - 8) / 8));
     oled_write(clock_is_pm() ? "pm" : "am", false);
 #        endif
 }
 
-// "MON 2026-08-31".  The RTC's own dayofweek field is not maintained by
+// "MON 2026-08-31", or "MON 08-31" without the year.  The default screen drops
+// the year to keep that row from filling all 21 columns; the clock screen keeps
+// it, both because it has the room and because clock_set_mode has to underline
+// it.  The RTC's own dayofweek field is not maintained by
 // pre_encoder_mode_change(), so the day is derived from the date instead.
-static void draw_date_text(void) {
+static void draw_date_text(bool with_year) {
     static const char *const days[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 
     int16_t year  = last_timespec.year + 1980;
@@ -588,59 +600,95 @@ static void draw_date_text(void) {
 
     oled_write(days[s75_day_of_week(year, month, day)], false);
     oled_write_P(PSTR(" "), false);
-    oled_write(s75_get_date(), false);
+    if (with_year) {
+        oled_write(s75_get_date(), false);
+    } else {
+        // The % 100 is what lets -Wformat-truncation see that the result fits;
+        // month and day are plain uint8_t as far as the compiler knows.
+        char md[8];
+        snprintf(md, sizeof(md), "%02u-%02u", (unsigned)(month % 100), (unsigned)(day % 100));
+        oled_write(md, false);
+    }
 }
 
+/*
+ * The default screen, over the 21x8 character grid:
+ *
+ *   row 0     LAYER n / ENC mmm / CAP
+ *   y 8-11    gutter
+ *   y 12-35   compact clock, am/pm at the right
+ *   y 36-39   gutter
+ *   row 5     day + MM-DD, centred over the mod flags / WPM row
+ *   row 6     pomodoro, when one is running
+ *   row 7     mod flags, WPM
+ *   rows 6-7  matrix activity box, at the left
+ *
+ * The clock is the one element not tied to the 8px text grid, which is what
+ * makes the two gutters possible at all.
+ *
+ * The full size clock and the full date live on OLED_TIME, one encoder click
+ * away, which is what lets this screen carry the abbreviated versions and
+ * leave the middle of the panel with some air in it.
+ */
 void draw_default(void) {
-    led_t led_state = host_keyboard_led_state();
-
     draw_status_row();
-    draw_big_clock(8);
+    // y=12 rather than 8: 32px of space, a 24px clock, so 4px above and below.
+    draw_big_clock(12, CLK_SM_DIGIT_W, CLK_SM_DIGIT_H, CLK_SM_THICK);
 
-    oled_set_cursor(0, 5);
-    draw_date_text();
-    oled_set_cursor(14, 5);
-    oled_write_P(PSTR("SCR"), led_state.scroll_lock);
-    oled_set_cursor(18, 5);
-    oled_write_P(PSTR("NUM"), led_state.num_lock);
+    // "MON 08-31" is 9 characters; column 9 centres it over columns 6-20,
+    // which is what the mod flags and WPM span on row 7.
+    oled_set_cursor(9, 5);
+    draw_date_text(false);
 
     draw_matrix_display(0, 48);
 
-    oled_set_cursor(6, 6);
+    oled_set_cursor(6, 7);
     draw_mod_flags();
 
 #        ifdef WPM_ENABLE
     {
         static char wpm_str[9];
         snprintf(wpm_str, sizeof(wpm_str), "WPM %03u", (unsigned)get_current_wpm());
-        oled_set_cursor(14, 6);
+        oled_set_cursor(14, 7);
         oled_write(wpm_str, false);
     }
 #        endif
 
 #        ifdef SAT75_POMODORO
-    oled_set_cursor(6, 7);
+    oled_set_cursor(6, 6);
     draw_pomodoro_line();
 #        endif
 }
 
-// Only reached via clock_set_mode on the large screen -- the default screen
-// already shows the time, so this is purely the field editor.
+/*
+ * The clock-only screen: full size digits, full date, nothing else.  Reached
+ * as OLED_TIME, and again whenever clock_set_mode is on -- browsing and
+ * editing share one layout, so the two cannot drift apart.  Setting swaps the
+ * status row for a title and underlines the field the encoder is pointing at.
+ */
 void draw_clock(void) {
     char digits[8];
     build_clock_digits(digits, sizeof(digits));
-    uint8_t x = clock_origin_x(digits);
+    uint8_t x = clock_origin_x(digits, CLK_DIGIT_W, CLK_THICK);
 
-    oled_write_P(PSTR("SET CLOCK"), false);
-    oled_set_cursor(14, 0);
-    oled_write_P(PSTR("ENC "), false);
-    oled_write(s75_get_enc_mode(), true);
-    s75_draw_line_v(125, 0, 8);
+    if (clock_set_mode) {
+        oled_write_P(PSTR("SET CLOCK"), false);
+        oled_set_cursor(14, 0);
+        oled_write_P(PSTR("ENC "), false);
+        oled_write(s75_get_enc_mode(), true);
+        s75_draw_line_v(125, 0, 8);
+    } else {
+        draw_status_row();
+    }
 
-    draw_big_clock(10);
+    draw_big_clock(10, CLK_DIGIT_W, CLK_DIGIT_H, CLK_THICK);
 
     oled_set_cursor(0, 6);
-    draw_date_text();
+    draw_date_text(true);
+
+    if (!clock_set_mode) {
+        return;
+    }
 
     // Underline whichever field the encoder is currently editing.  The date
     // text starts at column 4, after the three character day name.
