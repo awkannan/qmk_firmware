@@ -274,8 +274,20 @@ Nothing else is blocking. In priority order:
 
 ## Not done
 
-Rebasing onto upstream master. This branch is a long way behind, and `upstream`
-is not configured as a remote -- only `origin` (the fork). Deliberately deferred.
+Nothing outstanding on the rebase: this branch was rebased onto upstream
+`master` (`180f394b48`, 2026-10) with the `upstream` remote now configured.
+Two upstream changes needed carrying through:
+
+- #26320 moved satisfaction75 to the keyboard datablock only (no VIA custom
+  config); `satisfaction75_big_hs/config.h` now matches the other boards with
+  a plain `EECONFIG_KB_DATA_SIZE 20`, and `custom_config_load()` runs in
+  `keyboard_post_init_kb()` before the display starts.
+- #25591 made QP's comms callbacks return `bool`; only the sim's stub panel
+  needed changing.
+
+`DEFAULT_FOLDER` is gone upstream (keyboard aliases replace it), so
+`cannonkeys/satisfaction75` still resolves to rev1. The pre-rebase branch is
+kept as `backup/202610_sat75_quantum_painter_prerebase`.
 
 `sim/` and this file are development scaffolding, not firmware. They would need
 removing or relocating before anything goes near an upstream QMK PR.

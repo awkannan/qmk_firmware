@@ -49,10 +49,10 @@ static bool panel_flush(painter_device_t device) {
 
 static bool comms_init(painter_device_t device) { return true; }
 static bool comms_start(painter_device_t device) { return true; }
-static void comms_stop(painter_device_t device) {}
+static bool comms_stop(painter_device_t device) { return true; }
 static uint32_t comms_send(painter_device_t device, const void *data, uint32_t n) { return n; }
-static void comms_command(painter_device_t device, uint8_t cmd) {}
-static void comms_bulk(painter_device_t device, const uint8_t *seq, size_t len) {}
+static bool comms_command(painter_device_t device, uint8_t cmd) { return true; }
+static bool comms_bulk(painter_device_t device, const uint8_t *seq, size_t len) { return true; }
 
 static const painter_comms_with_command_vtable_t panel_comms = {
     .base =
