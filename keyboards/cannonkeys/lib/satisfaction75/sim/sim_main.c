@@ -1,10 +1,11 @@
-// Drives the real draw_*() functions against the stubbed OLED buffer and dumps
-// each screen.  Build for both canvas sizes; see the Makefile.
+// Drives the real draw_*() functions through real Quantum Painter, into a
+// stand-in panel, and dumps each screen.  Build for both canvas sizes; see the
+// Makefile.
 #include <stdio.h>
 #include <string.h>
 #include "satisfaction_core.h"
-#include "oled_driver.h"
 #include "sim_env.h"
+#include "sim_qp.h"
 #ifdef POMODORO_ENABLE
 #    include "satisfaction_pomodoro.h"
 #endif
@@ -30,61 +31,66 @@ int8_t   month_config = 0;
 int8_t   day_config = 0;
 uint8_t  previous_encoder_mode = 0;
 
-bool oled_task_user(void) { return true; }
-oled_rotation_t oled_init_user(oled_rotation_t r) { return r; }
-
 // Mirror housekeeping_task_kb()'s RTC snapshot so draw code sees a live clock.
 static void sim_sync_rtc(void) {
     rtcGetTime(&RTCD1, &last_timespec);
     last_minute = last_timespec.millisecond / 1000 / 60;
 }
 
-// One oled_task() pass, which only resets the cursor before calling in.
+/*
+ * One repaint, then the main loop passes that push it to the panel, one
+ * controller page each.  The sim builds with SAT75_OLED_REPAINT_INTERVAL=0, so
+ * the first s75_display_task() call always draws; what remains is exactly
+ * SAT75_PANEL_PAGES calls of pushing.  Time does not move, as it did not when
+ * the old sim called oled_task_kb() directly.
+ */
 static void repaint(void) {
     sim_sync_rtc();
-    oled_request_wakeup();   // as if the user just touched the board
-    oled_set_cursor(0, 0);
-    oled_task_kb();
+    oled_request_wakeup(); // as if the user just touched the board
+    s75_display_task();
+    for (int i = 0; i < SAT75_PANEL_PAGES; i++) {
+        s75_display_task();
+    }
 }
 
-static void report_stale(void) {
-    uint16_t stale = sim_oled_stale_blocks();
-    if (stale) {
-        printf("STALE BLOCKS on panel: 0x%04x\n", stale);
-    }
+static void report_sent(void) {
+    uint32_t flushes, pixels;
+    sim_panel_take_stats(&flushes, &pixels);
+    printf("pages sent: %u/%u, %u px\n\n", (unsigned)flushes, (unsigned)SAT75_PANEL_PAGES, (unsigned)pixels);
 }
 
 static void frame(const char *title) {
     repaint();
-    uint8_t sent = sim_oled_flush(OLED_BLOCK_COUNT);
-    report_stale();
-    sim_oled_dump(title);
-    printf("blocks sent: %u/%u\n\n", sent, (unsigned)OLED_BLOCK_COUNT);
+    sim_panel_dump(title);
+    report_sent();
 }
 
-// The hardware bug: the driver sends one block per main loop pass, and on the
-// large panel a whole screen takes about as long as the 66ms repaint interval.
-// When every repaint marks every block dirty, the render restarts from block 0
-// each time and the last blocks are never sent.  Model that with a fixed budget
-// of blocks per repaint, switch screens, and check the panel converges.
-#define STARVED_BUDGET 12
-
-static void starved_switch_scenario(void) {
+/*
+ * Only what changed reaches the panel.  Redrawing an unchanged screen must send
+ * nothing; a single key press on the default screen should send only the pages
+ * under the matrix activity box.
+ */
+static void bandwidth_scenario(void) {
     sim_reset();
     oled_mode = OLED_DEFAULT;
-    frame("STARVED: default, fully sent");
+    repaint();
+    report_sent();
 
-    clock_set_mode = true; // a static screen, so only the switch itself differs
-    for (int i = 0; i < 8; i++) {
-        repaint();
-        sim_oled_flush(STARVED_BUDGET);
-        sim_advance_ms(66);
-    }
-    printf("switched screens at %u blocks per repaint:\n", STARVED_BUDGET);
-    uint16_t stale = sim_oled_stale_blocks();
-    printf(stale ? "STALE BLOCKS on panel: 0x%04x\n" : "panel matches buffer\n", stale);
+    repaint();
+    printf("unchanged screen redrawn: ");
+    report_sent();
+
+    sim_press(0, 0);
+    repaint();
+    printf("one key pressed: ");
+    report_sent();
+    sim_release_all();
+
+    clock_set_mode = true;
+    repaint();
+    printf("switched to the clock screen: ");
+    report_sent();
     clock_set_mode = false;
-    printf("\n");
 }
 
 // Cross-checks s75_days_from_civil()/s75_day_of_week() against a reference.
@@ -215,7 +221,7 @@ static void pomodoro_scenarios(void) {
 
 int main(int argc, char **argv) {
     if (argc > 1 && strcmp(argv[1], "--dates") == 0) return dump_dates();
-#ifdef SAT75_SIM_LARGE
+#ifdef SAT75_OLED_LARGE
     const char *size = "LARGE 128x64";
 #else
     const char *size = "SMALL 128x32";
@@ -224,14 +230,14 @@ int main(int argc, char **argv) {
 
     sim_reset();
     sim_sync_rtc();
-
-    // Sanity: the rotation the keyboard asks for must match the panel.
-    oled_rotation_t rot = oled_init_kb(OLED_ROTATION_0);
-#ifdef SAT75_SIM_LARGE
-    printf("oled_init_kb() -> %d (expect %d / ROTATION_90)\n\n", rot, OLED_ROTATION_90);
-#else
-    printf("oled_init_kb() -> %d (expect %d / ROTATION_0)\n\n", rot, OLED_ROTATION_0);
-#endif
+    s75_display_init();
+    printf("init, clearing the panel: ");
+    report_sent();
+    // The first task pass also runs the one-off re-init (sim time starts well
+    // past 3s), which clears and redraws the whole panel again.
+    repaint();
+    printf("first repaint, after the re-init: ");
+    report_sent();
 
     oled_mode = OLED_DEFAULT;
     frame("DEFAULT idle");
@@ -272,7 +278,7 @@ int main(int argc, char **argv) {
     pomodoro_scenarios();
 #endif
 
-    starved_switch_scenario();
+    bandwidth_scenario();
 
     return 0;
 }

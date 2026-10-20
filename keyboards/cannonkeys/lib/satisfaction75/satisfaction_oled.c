@@ -45,27 +45,124 @@ uint8_t s75_day_of_week(int16_t year, uint8_t month, uint8_t day) {
 }
 
 
-#ifdef OLED_ENABLE
-#    include "oled_driver.h"
+#ifdef QUANTUM_PAINTER_ENABLE
+#    include "qp.h"
+#    include "qp_surface.h"
+#    include "qp_comms.h"
+#    ifdef SAT75_OLED_LARGE
+#        include "qp_sh1107.h"
+#    else
+#        include "qp_sh1106.h"
+#    endif
+#    include "s75_glcdfont.qff.h"
 
-oled_rotation_t oled_init_kb(oled_rotation_t rotation) {
-    return SAT75_OLED_ROTATION;
+/*
+ * Rendering happens in two stages.
+ *
+ * Every repaint draws the whole screen from scratch into `canvas`, an
+ * offscreen 1bpp surface.  Starting from a blank canvas keeps each draw_*()
+ * function free of any knowledge of what was on screen before.
+ *
+ * The canvas then reaches the panel one controller page at a time, one page per
+ * main loop pass, by copying it into the panel driver's own framebuffer and
+ * flushing.  That framebuffer only marks pixels dirty when their value actually
+ * changes, so a flush sends just the part of the page that differs from what
+ * the panel already shows; an unchanged page sends nothing.  Pushing a page at
+ * a time bounds how long the main loop blocks on I2C (qp_flush() is
+ * synchronous) to one page, roughly what the old OLED driver sent per pass.
+ *
+ * A new frame is not drawn until every page of the previous one has been
+ * pushed.  That is what stops the bottom of the screen going stale: the old
+ * driver restarted from its first block on every repaint and, on the 64x128
+ * panel, never reached the last ones.
+ */
+static painter_device_t      display;
+static painter_device_t      canvas;
+static painter_font_handle_t font;
+
+static uint8_t canvas_buffer[SURFACE_REQUIRED_BUFFER_BYTE_SIZE(SAT75_CANVAS_WIDTH, SAT75_CANVAS_HEIGHT, 1)];
+
+/*
+ * A "page" is the strip of canvas that lands in one controller page.  On the
+ * small panel at rotation 0 that is a row of 8px; on the large panel, rotated,
+ * it is a column 8px wide.
+ */
+#    define PAGE_COUNT SAT75_PANEL_PAGES
+#    ifdef SAT75_OLED_LARGE
+#        define PAGE_W 8
+#        define PAGE_H SAT75_CANVAS_HEIGHT
+#        define PAGE_X(p) ((p) * 8)
+#        define PAGE_Y(p) 0
+#    else
+#        define PAGE_W SAT75_CANVAS_WIDTH
+#        define PAGE_H 8
+#        define PAGE_X(p) 0
+#        define PAGE_Y(p) ((p) * 8)
+#    endif
+
+static uint8_t  next_page = PAGE_COUNT; // PAGE_COUNT when the last frame is fully pushed
+static uint32_t last_repaint;
+static bool     display_on;
+
+// The text cursor, in character cells.
+static uint8_t cursor_col;
+static uint8_t cursor_row;
+
+static void set_power(bool on) {
+    if (on != display_on) {
+        qp_power(display, on);
+        display_on = on;
+    }
 }
 
 /*
- * The driver's per-block dirty mask.  Not in oled_driver.h, but a plain global
- * in oled_driver.c; keyboards/handwired/onekey's oled keymap reads it too.
- *
- * Every repaint starts from oled_clear(), which marks every block dirty.  The
- * driver then sends one block per main loop pass, lowest index first.  On the
- * 64x128 SH1107 a block is 64 bytes sent as eight page-mode command+data pairs
- * over ~400kHz I2C, so the whole screen takes about as long as the 66ms repaint
- * interval -- and the next repaint re-dirties block 0, so the last blocks (the
- * bottom text row) can go unsent indefinitely, leaving the previous screen
- * visible there.  repaint() below clears and redraws as before, then narrows
- * the mask to the blocks whose bytes actually changed.
+ * Sent after Quantum Painter's own init sequence, to match what the old OLED
+ * driver configured.  QP leaves contrast at 0x7F and the precharge and VCOM
+ * levels at their reset values, which renders noticeably dimmer than these
+ * panels have always looked.
  */
-extern OLED_BLOCK_TYPE oled_dirty;
+static const uint8_t panel_setup[] = {
+    // Command, Delay, N, Data[N]
+    0x81, 0, 1, 0xFF, // contrast
+    0xD9, 0, 1, 0xF1, // precharge period
+    0xDB, 0, 1, 0x20, // VCOM deselect level
+#    ifndef SAT75_OLED_LARGE
+    // QP drives the SSD1306 with page addressing commands.  Page mode is the
+    // controller's power-on default, but the old OLED driver set horizontal
+    // mode, and that survives a DFU reflash because the panel never loses
+    // power.
+    0x20, 0, 1, 0x02, // memory addressing mode: page
+#    endif
+};
+
+static void init_panel(void) {
+    qp_init(display, SAT75_PANEL_ROTATION);
+    // A bulk sequence rather than qp_comms_command_databyte(), which would
+    // send the parameter bytes as display data.
+    if (qp_comms_start(display)) {
+        qp_comms_bulk_command_sequence(display, panel_setup, sizeof(panel_setup));
+        qp_comms_stop(display);
+    }
+    // The panel's RAM holds whatever it powered up with.  A fresh init marks
+    // the whole (blank) framebuffer dirty, so this flush clears it.
+    qp_flush(display);
+    display_on = true;
+    next_page  = PAGE_COUNT;
+}
+
+void s75_display_init(void) {
+#    ifdef SAT75_OLED_LARGE
+    display = qp_sh1107_make_i2c_device(SAT75_PANEL_WIDTH, SAT75_PANEL_HEIGHT, SAT75_OLED_I2C_ADDRESS);
+#    else
+    display = qp_sh1106_make_i2c_device(SAT75_PANEL_WIDTH, SAT75_PANEL_HEIGHT, SAT75_OLED_I2C_ADDRESS);
+#    endif
+    canvas = qp_make_mono1bpp_surface(SAT75_CANVAS_WIDTH, SAT75_CANVAS_HEIGHT, canvas_buffer);
+    qp_init(canvas, QP_ROTATION_0);
+    font = qp_load_font_mem(font_s75_glcdfont);
+
+    init_panel();
+    oled_request_wakeup();
+}
 
 static void draw_screen(void) {
     if (clock_set_mode) {
@@ -97,41 +194,74 @@ static void draw_screen(void) {
 }
 
 static void repaint(void) {
-    static uint8_t prev[OLED_MATRIX_SIZE];
-
-    const uint8_t *buf = oled_read_raw(0).current_element;
-    memcpy(prev, buf, sizeof(prev));
-    // Blocks still waiting to be sent from an earlier repaint must stay dirty
-    // even if this frame leaves them unchanged.
-    OLED_BLOCK_TYPE dirty = oled_dirty;
-
-    oled_clear();
+    qp_rect(canvas, 0, 0, SAT75_CANVAS_WIDTH - 1, SAT75_CANVAS_HEIGHT - 1, 0, 0, 0, true);
+    cursor_col = 0;
+    cursor_row = 0;
     draw_screen();
-
-    for (uint8_t b = 0; b < OLED_BLOCK_COUNT; b++) {
-        if (memcmp(&buf[b * OLED_BLOCK_SIZE], &prev[b * OLED_BLOCK_SIZE], OLED_BLOCK_SIZE)) {
-            dirty |= (OLED_BLOCK_TYPE)1 << b;
-        }
-    }
-    oled_dirty = dirty;
+    next_page = 0;
 }
 
-bool oled_task_kb(void) {
-    if (!oled_task_user()) {
-        return false;
+// Copies one page of the canvas into the panel's framebuffer, then sends
+// whatever part of it changed.
+static void push_page(uint8_t page) {
+    uint8_t        packed[(PAGE_W * PAGE_H + 7) / 8] = {0};
+    const uint16_t x0                                = PAGE_X(page);
+    const uint16_t y0                                = PAGE_Y(page);
+    uint16_t       n                                 = 0;
+
+    // Both buffers are 1bpp, row major, least significant bit first.
+    for (uint16_t y = y0; y < y0 + PAGE_H; y++) {
+        for (uint16_t x = x0; x < x0 + PAGE_W; x++, n++) {
+            uint16_t src = y * SAT75_CANVAS_WIDTH + x;
+            if (canvas_buffer[src / 8] & (1 << (src % 8))) {
+                packed[n / 8] |= 1 << (n % 8);
+            }
+        }
     }
-    if (!oled_task_needs_to_repaint()) {
-        return false;
+
+    qp_viewport(display, x0, y0, x0 + PAGE_W - 1, y0 + PAGE_H - 1);
+    qp_pixdata(display, packed, PAGE_W * PAGE_H);
+    qp_flush(display);
+}
+
+void s75_display_task(void) {
+    if (!display) {
+        return;
     }
-    repaint();
-    return false;
+
+    /*
+     * The panel can miss its init when the board is first plugged in, and
+     * stay dark until the next reset.  keyboard_post_init_kb() used to work
+     * around this with a blocking 3s delay and re-init; re-initialising once
+     * after 3s of uptime does the same without stalling the keyboard at boot.
+     */
+    static bool reinit_done = false;
+    if (!reinit_done && timer_read32() > 3000) {
+        reinit_done = true;
+        init_panel();
+        oled_request_repaint();
+    }
+
+    if (next_page < PAGE_COUNT) {
+        push_page(next_page++);
+        return;
+    }
+
+    if (timer_elapsed32(last_repaint) < SAT75_OLED_REPAINT_INTERVAL) {
+        return;
+    }
+    last_repaint = timer_read32();
+
+    if (oled_task_needs_to_repaint()) {
+        repaint();
+    }
 }
 
 // Request a repaint of the OLED image without resetting the OLED sleep timer.
 // Used for things like clock updates that should not keep the OLED turned on
 // if there is no other activity.
 void oled_request_repaint(void) {
-    if (is_oled_on()) {
+    if (display_on) {
         oled_repaint_requested = true;
     }
 }
@@ -142,16 +272,15 @@ void oled_request_wakeup(void) {
     oled_wakeup_requested = true;
 }
 
-// Check whether oled_task_user() needs to repaint the OLED image.  This
-// function should be called at the start of oled_task_user(); it also handles
-// the OLED sleep timer and the OLED_OFF mode.
+// Check whether the OLED image needs to be repainted.  Also handles the OLED
+// sleep timer and the OLED_OFF mode.
 bool oled_task_needs_to_repaint(void) {
     // In the OLED_OFF mode the OLED is kept turned off; any wakeup requests
     // are ignored.
     if ((oled_mode == OLED_OFF) && !clock_set_mode) {
         oled_wakeup_requested  = false;
         oled_repaint_requested = false;
-        oled_off();
+        set_power(false);
         return false;
     }
 
@@ -160,7 +289,7 @@ bool oled_task_needs_to_repaint(void) {
         oled_wakeup_requested  = false;
         oled_repaint_requested = false;
         oled_sleep_timer       = timer_read32() + CUSTOM_OLED_TIMEOUT;
-        oled_on();
+        set_power(true);
         return true;
     }
 
@@ -171,15 +300,14 @@ bool oled_task_needs_to_repaint(void) {
         return true;
     }
 
-    // If the OLED is currently off, skip the repaint (which would turn the
-    // OLED on if the image is changed in any way).
-    if (!is_oled_on()) {
+    // If the OLED is currently off, skip the repaint.
+    if (!display_on) {
         return false;
     }
 
     // If the sleep timer has expired while the OLED was on, turn the OLED off.
     if (timer_expired32(timer_read32(), oled_sleep_timer)) {
-        oled_off();
+        set_power(false);
         return false;
     }
 
@@ -196,22 +324,86 @@ bool oled_task_needs_to_repaint(void) {
 // ---------------------------------------------------------------------
 
 void s75_draw_line_h(uint8_t x, uint8_t y, uint8_t len) {
-    for (uint8_t i = 0; i < len; i++) {
-        oled_write_pixel(i + x, y, true);
-    }
+    s75_fill_rect(x, y, len, 1);
 }
 
 void s75_draw_line_v(uint8_t x, uint8_t y, uint8_t len) {
-    for (uint8_t i = 0; i < len; i++) {
-        oled_write_pixel(x, i + y, true);
-    }
+    s75_fill_rect(x, y, 1, len);
 }
 
 void s75_fill_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h) {
-    for (uint8_t iy = 0; iy < h; iy++) {
-        for (uint8_t ix = 0; ix < w; ix++) {
-            oled_write_pixel(x + ix, y + iy, true);
+    if (w == 0 || h == 0) {
+        return;
+    }
+    qp_rect(canvas, x, y, x + w - 1, y + h - 1, 0, 0, 255, true);
+}
+
+void s75_write_pixel(uint8_t x, uint8_t y, bool on) {
+    qp_setpixel(canvas, x, y, 0, 0, on ? 255 : 0);
+}
+
+/*
+ * Draws bitmap data in the OLED controller's page layout -- each byte a column
+ * of 8 vertical pixels, least significant bit at the top, pages running left
+ * to right and then down -- starting at the canvas origin.  This is what
+ * oled_write_raw() took, and it lets the bongo art stay in that form.  A one
+ * pixel wide viewport streams pixels top to bottom, which is exactly one
+ * column byte.
+ */
+void s75_draw_raw(const uint8_t *data, uint16_t size) {
+    for (uint16_t i = 0; i < size; i++) {
+        uint16_t x = i % SAT75_CANVAS_WIDTH;
+        uint16_t y = (i / SAT75_CANVAS_WIDTH) * 8;
+        if (y >= SAT75_CANVAS_HEIGHT) {
+            break;
         }
+        qp_viewport(canvas, x, y, x, y + 7);
+        qp_pixdata(canvas, &data[i], 8);
+    }
+}
+
+// ---------------------------------------------------------------------
+// Text
+// ---------------------------------------------------------------------
+
+void s75_set_cursor(uint8_t col, uint8_t row) {
+    // Out of range lands at the origin, as s75_set_cursor() does.
+    if (row >= SAT75_TEXT_ROWS || col >= SAT75_TEXT_COLS) {
+        col = 0;
+        row = 0;
+    }
+    cursor_col = col;
+    cursor_row = row;
+}
+
+// Wraps to the next row at the right edge, and back to the top after the last.
+void s75_advance_char(void) {
+    if (++cursor_col >= SAT75_TEXT_COLS) {
+        cursor_col = 0;
+        if (++cursor_row >= SAT75_TEXT_ROWS) {
+            cursor_row = 0;
+        }
+    }
+}
+
+void s75_write_char(char c, bool invert) {
+    uint16_t x = cursor_col * SAT75_FONT_WIDTH;
+    uint16_t y = cursor_row * SAT75_FONT_HEIGHT;
+    uint8_t  fg = invert ? 0 : 255;
+
+    if (c >= 0x20 && c <= 0x7E) {
+        char str[2] = {c, '\0'};
+        qp_drawtext_recolor(canvas, x, y, font, str, 0, 0, fg, 0, 0, 255 - fg);
+    } else {
+        // Outside the font: a blank cell.
+        qp_rect(canvas, x, y, x + SAT75_FONT_WIDTH - 1, y + SAT75_FONT_HEIGHT - 1, 0, 0, 255 - fg, true);
+    }
+    s75_advance_char();
+}
+
+void s75_write(const char *str, bool invert) {
+    while (*str) {
+        s75_write_char(*str++, invert);
     }
 }
 
@@ -358,14 +550,14 @@ char *s75_get_date(void) {
 // Writes the four modifier flags as "S C A G", inverting the active ones.
 static void draw_mod_flags(void) {
     uint8_t mod_state = get_mods();
-    oled_write_P(PSTR("S"), mod_state & MOD_MASK_SHIFT);
-    oled_advance_char();
-    oled_write_P(PSTR("C"), mod_state & MOD_MASK_CTRL);
-    oled_advance_char();
-    oled_write_P(PSTR("A"), mod_state & MOD_MASK_ALT);
-    oled_advance_char();
-    oled_write_P(PSTR("G"), mod_state & MOD_MASK_GUI);
-    oled_advance_char();
+    s75_write("S", mod_state & MOD_MASK_SHIFT);
+    s75_advance_char();
+    s75_write("C", mod_state & MOD_MASK_CTRL);
+    s75_advance_char();
+    s75_write("A", mod_state & MOD_MASK_ALT);
+    s75_advance_char();
+    s75_write("G", mod_state & MOD_MASK_GUI);
+    s75_advance_char();
 }
 
 // ---------------------------------------------------------------------
@@ -379,28 +571,28 @@ static void draw_mod_flags(void) {
 #        define MATRIX_DISPLAY_Y 18
 
 void draw_default(void) {
-    oled_write_P(PSTR("LAYER "), false);
-    oled_write_char(get_highest_layer(layer_state) + 0x30, true);
+    s75_write("LAYER ", false);
+    s75_write_char(get_highest_layer(layer_state) + 0x30, true);
 
-    oled_write_P(PSTR(" ENC "), false);
-    oled_write(s75_get_enc_mode(), true);
+    s75_write(" ENC ", false);
+    s75_write(s75_get_enc_mode(), true);
 
     led_t led_state = host_keyboard_led_state();
-    oled_set_cursor(18, 0);
-    oled_write_P(PSTR("CAP"), led_state.caps_lock);
-    oled_set_cursor(18, 1);
-    oled_write_P(PSTR("SCR"), led_state.scroll_lock);
+    s75_set_cursor(18, 0);
+    s75_write("CAP", led_state.caps_lock);
+    s75_set_cursor(18, 1);
+    s75_write("SCR", led_state.scroll_lock);
 
-    oled_set_cursor(6, 3);
+    s75_set_cursor(6, 3);
     draw_mod_flags();
 
-    oled_write(s75_get_time(), false);
+    s75_write(s75_get_time(), false);
 
     // matrix
     for (uint8_t x = 0; x < MATRIX_ROWS; x++) {
         for (uint8_t y = 0; y < MATRIX_COLS; y++) {
             bool on = (matrix_get_row(x) & (1 << y)) > 0;
-            oled_write_pixel(MATRIX_DISPLAY_X + y + 2, MATRIX_DISPLAY_Y + x + 2, on);
+            s75_write_pixel(MATRIX_DISPLAY_X + y + 2, MATRIX_DISPLAY_Y + x + 2, on);
         }
     }
 
@@ -419,22 +611,22 @@ void draw_default(void) {
 }
 
 void draw_clock(void) {
-    oled_set_cursor(0, 0);
-    oled_write(s75_get_date(), false);
-    oled_set_cursor(0, 2);
-    oled_write(s75_get_time(), false);
+    s75_set_cursor(0, 0);
+    s75_write(s75_get_date(), false);
+    s75_set_cursor(0, 2);
+    s75_write(s75_get_time(), false);
 
-    oled_set_cursor(12, 0);
-    oled_write_P(PSTR(" ENC "), false);
-    oled_write(s75_get_enc_mode(), true);
+    s75_set_cursor(12, 0);
+    s75_write(" ENC ", false);
+    s75_write(s75_get_enc_mode(), true);
 
-    oled_set_cursor(13, 1);
-    oled_write_P(PSTR("LAYER "), false);
-    oled_write_char(get_highest_layer(layer_state) + 0x30, true);
+    s75_set_cursor(13, 1);
+    s75_write("LAYER ", false);
+    s75_write_char(get_highest_layer(layer_state) + 0x30, true);
 
     led_t led_state = host_keyboard_led_state();
-    oled_set_cursor(15, 3);
-    oled_write_P(PSTR("CAPS"), led_state.caps_lock);
+    s75_set_cursor(15, 3);
+    s75_write("CAPS", led_state.caps_lock);
 
     if (clock_set_mode) {
         switch (time_config_idx) {
@@ -504,15 +696,15 @@ static void draw_matrix_display(uint8_t x, uint8_t y) {
 // The two vertical rules close the left hand edge of the inverted blocks,
 // which the 6x8 font leaves open.
 static void draw_status_row(void) {
-    oled_write_P(PSTR("LAYER "), false);
-    oled_write_char(get_highest_layer(layer_state) + 0x30, true);
+    s75_write("LAYER ", false);
+    s75_write_char(get_highest_layer(layer_state) + 0x30, true);
 
-    oled_set_cursor(9, 0);
-    oled_write_P(PSTR("ENC "), false);
-    oled_write(s75_get_enc_mode(), true);
+    s75_set_cursor(9, 0);
+    s75_write("ENC ", false);
+    s75_write(s75_get_enc_mode(), true);
 
-    oled_set_cursor(18, 0);
-    oled_write_P(PSTR("CAP"), host_keyboard_led_state().caps_lock);
+    s75_set_cursor(18, 0);
+    s75_write("CAP", host_keyboard_led_state().caps_lock);
 
     s75_draw_line_v(35, 0, 8);
     s75_draw_line_v(77, 0, 8);
@@ -576,8 +768,8 @@ static void draw_big_clock(uint8_t y, uint8_t digit_w, uint8_t digit_h, uint8_t 
 
 #        ifndef SAT75_CLOCK_24H
     // Sits on the same baseline as the bottom of the digits.
-    oled_set_cursor(19, (uint8_t)((y + digit_h - 8) / 8));
-    oled_write(clock_is_pm() ? "pm" : "am", false);
+    s75_set_cursor(19, (uint8_t)((y + digit_h - 8) / 8));
+    s75_write(clock_is_pm() ? "pm" : "am", false);
 #        endif
 }
 
@@ -598,16 +790,16 @@ static void draw_date_text(bool with_year) {
         day   = day_config;
     }
 
-    oled_write(days[s75_day_of_week(year, month, day)], false);
-    oled_write_P(PSTR(" "), false);
+    s75_write(days[s75_day_of_week(year, month, day)], false);
+    s75_write(" ", false);
     if (with_year) {
-        oled_write(s75_get_date(), false);
+        s75_write(s75_get_date(), false);
     } else {
         // The % 100 is what lets -Wformat-truncation see that the result fits;
         // month and day are plain uint8_t as far as the compiler knows.
         char md[8];
         snprintf(md, sizeof(md), "%02u-%02u", (unsigned)(month % 100), (unsigned)(day % 100));
-        oled_write(md, false);
+        s75_write(md, false);
     }
 }
 
@@ -637,25 +829,25 @@ void draw_default(void) {
 
     // "MON 08-31" is 9 characters; column 9 centres it over columns 6-20,
     // which is what the mod flags and WPM span on row 7.
-    oled_set_cursor(9, 5);
+    s75_set_cursor(9, 5);
     draw_date_text(false);
 
     draw_matrix_display(0, 48);
 
-    oled_set_cursor(6, 7);
+    s75_set_cursor(6, 7);
     draw_mod_flags();
 
 #        ifdef WPM_ENABLE
     {
         static char wpm_str[9];
         snprintf(wpm_str, sizeof(wpm_str), "WPM %03u", (unsigned)get_current_wpm());
-        oled_set_cursor(14, 7);
-        oled_write(wpm_str, false);
+        s75_set_cursor(14, 7);
+        s75_write(wpm_str, false);
     }
 #        endif
 
 #        ifdef SAT75_POMODORO
-    oled_set_cursor(6, 6);
+    s75_set_cursor(6, 6);
     draw_pomodoro_line();
 #        endif
 }
@@ -672,10 +864,10 @@ void draw_clock(void) {
     uint8_t x = clock_origin_x(digits, CLK_DIGIT_W, CLK_THICK);
 
     if (clock_set_mode) {
-        oled_write_P(PSTR("SET CLOCK"), false);
-        oled_set_cursor(14, 0);
-        oled_write_P(PSTR("ENC "), false);
-        oled_write(s75_get_enc_mode(), true);
+        s75_write("SET CLOCK", false);
+        s75_set_cursor(14, 0);
+        s75_write("ENC ", false);
+        s75_write(s75_get_enc_mode(), true);
         s75_draw_line_v(125, 0, 8);
     } else {
         draw_status_row();
@@ -683,7 +875,7 @@ void draw_clock(void) {
 
     draw_big_clock(10, CLK_DIGIT_W, CLK_DIGIT_H, CLK_THICK);
 
-    oled_set_cursor(0, 6);
+    s75_set_cursor(0, 6);
     draw_date_text(true);
 
     if (!clock_set_mode) {
@@ -717,7 +909,7 @@ void draw_clock(void) {
 
 #    endif // SAT75_OLED_SMALL
 
-#else // OLED_ENABLE
+#else // QUANTUM_PAINTER_ENABLE
 
 void oled_request_repaint(void) {}
 

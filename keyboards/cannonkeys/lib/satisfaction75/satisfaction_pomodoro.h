@@ -10,7 +10,7 @@
  * The pomodoro's only output is the screen, so the feature needs one.  Every
  * other file tests SAT75_POMODORO rather than spelling out both conditions.
  */
-#if defined(POMODORO_ENABLE) && defined(OLED_ENABLE)
+#if defined(POMODORO_ENABLE) && defined(QUANTUM_PAINTER_ENABLE)
 #    define SAT75_POMODORO
 #endif
 

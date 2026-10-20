@@ -4,6 +4,7 @@
 #include <string.h>
 
 RTCDriver     RTCD1 = 0;
+bool          debug_enable = false;
 layer_state_t layer_state = 1;
 
 static uint8_t  s_mods;

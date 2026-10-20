@@ -6,7 +6,7 @@
 #include <stdbool.h>
 
 // Drawing only, so it needs a screen.  Other files test SAT75_BONGO.
-#if defined(BONGO_ENABLE) && defined(OLED_ENABLE)
+#if defined(BONGO_ENABLE) && defined(QUANTUM_PAINTER_ENABLE)
 #    define SAT75_BONGO
 #endif
 

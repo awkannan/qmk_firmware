@@ -23,11 +23,15 @@
 #define I2C1_TIMINGR_SCLH 0x03U
 #define I2C1_TIMINGR_SCLL 0x09U
 
-// configure oled driver for the 128x32 oled
-#define OLED_UPDATE_INTERVAL 66 // ~15fps
-
-// OLED_TIMEOUT is incompatible with the OLED_OFF mode
-#define OLED_TIMEOUT 0
+// Quantum Painter's display timeout is incompatible with the OLED_OFF mode;
+// CUSTOM_OLED_TIMEOUT below replaces it.
+#define QUANTUM_PAINTER_DISPLAY_TIMEOUT 0
+// Only the font is ever loaded, and nothing animates.  (Animations stay
+// compiled in: this tree's QP fails to link with them disabled.)
+#define QUANTUM_PAINTER_NUM_IMAGES 1
+#define QUANTUM_PAINTER_NUM_FONTS 1
+#define QUANTUM_PAINTER_CONCURRENT_ANIMATIONS 1
+#define QUANTUM_PAINTER_PIXDATA_BUFFER_SIZE 32
 
 // OLED timeout reimplemented in the keyboard-specific code
 #define CUSTOM_OLED_TIMEOUT 60000

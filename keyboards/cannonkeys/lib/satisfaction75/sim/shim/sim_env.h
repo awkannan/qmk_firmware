@@ -39,6 +39,9 @@ uint16_t timer_read(void);
 uint32_t timer_elapsed32(uint32_t last);
 uint16_t timer_elapsed(uint16_t last);
 bool     timer_expired32(uint32_t current, uint32_t future);
+#define TIMER_DIFF_32(a, b) ((uint32_t)((a) - (b)))
+
+extern bool debug_enable; // Quantum Painter saves and restores it
 
 // --- sim controls -----------------------------------------------------
 void sim_set_layer(uint8_t layer);

@@ -6,42 +6,55 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#ifdef OLED_ENABLE
-#    include "oled_driver.h"
-#endif
-
 /*
- * The Satisfaction75 family ships two OLED panels.  Both present a 128px wide
- * logical canvas once the driver's rotation is applied; they differ only in
- * height.
+ * The Satisfaction75 family ships two OLED panels, both driven through Quantum
+ * Painter.  Both present a 128px wide logical canvas once rotation is applied;
+ * they differ only in height.
  *
- *   small   128x32 panel, OLED_ROTATION_0    ->  128 x 32 canvas, 21 x 4 chars
- *   large    64x128 panel, OLED_ROTATION_90  ->  128 x 64 canvas, 21 x 8 chars
+ *   small   128x32 SSD1306, sh1106 driver, QP_ROTATION_0    ->  128 x 32 canvas, 21 x 4 chars
+ *   large    64x128 SH1107, sh1107 driver, QP_ROTATION_270  ->  128 x 64 canvas, 21 x 8 chars
  *
- * A board opts into the large panel by defining OLED_DISPLAY_64X128 in its
- * config.h, which is also what the OLED driver keys off.  Deriving the layout
- * from that macro keeps the two from drifting apart; define SAT75_OLED_LARGE
- * or SAT75_OLED_SMALL by hand only if you need to override it.
+ * A board opts into the large panel by defining SAT75_OLED_LARGE in its
+ * config.h, and selecting the sh1107_i2c driver in its rules.mk.
+ *
+ * QP_ROTATION_270 rather than 90 on the large panel: it is the rotation that
+ * lands each logical pixel where the old OLED driver's OLED_ROTATION_90 put it
+ * (logical x,y -> panel column y, row 127 - x), so the image is the same way
+ * up as it always was.
  */
 #if !defined(SAT75_OLED_LARGE) && !defined(SAT75_OLED_SMALL)
-#    if defined(OLED_DISPLAY_64X128)
-#        define SAT75_OLED_LARGE
-#    else
-#        define SAT75_OLED_SMALL
-#    endif
+#    define SAT75_OLED_SMALL
 #endif
 
 #ifdef SAT75_OLED_LARGE
-#    define SAT75_OLED_ROTATION OLED_ROTATION_90
+#    define SAT75_PANEL_WIDTH 64
+#    define SAT75_PANEL_HEIGHT 128
+#    define SAT75_PANEL_ROTATION QP_ROTATION_270
 #    define SAT75_CANVAS_HEIGHT 64
 #else
-#    define SAT75_OLED_ROTATION OLED_ROTATION_0
+#    define SAT75_PANEL_WIDTH 128
+#    define SAT75_PANEL_HEIGHT 32
+#    define SAT75_PANEL_ROTATION QP_ROTATION_0
 #    define SAT75_CANVAS_HEIGHT 32
 #endif
 
+// Controller pages: 8px strips along the panel's native height.
+#define SAT75_PANEL_PAGES (SAT75_PANEL_HEIGHT / 8)
+
 #define SAT75_CANVAS_WIDTH 128
-#define SAT75_TEXT_ROWS (SAT75_CANVAS_HEIGHT / 8)
-#define SAT75_TEXT_COLS (SAT75_CANVAS_WIDTH / 6) // OLED_FONT_WIDTH
+#define SAT75_FONT_WIDTH 6
+#define SAT75_FONT_HEIGHT 8
+#define SAT75_TEXT_ROWS (SAT75_CANVAS_HEIGHT / SAT75_FONT_HEIGHT)
+#define SAT75_TEXT_COLS (SAT75_CANVAS_WIDTH / SAT75_FONT_WIDTH)
+
+#ifndef SAT75_OLED_I2C_ADDRESS
+#    define SAT75_OLED_I2C_ADDRESS 0x3C
+#endif
+
+// How often the screen is redrawn, in ms.  ~15fps.
+#ifndef SAT75_OLED_REPAINT_INTERVAL
+#    define SAT75_OLED_REPAINT_INTERVAL 66
+#endif
 
 // Pixels per key in the matrix activity display.
 #ifdef SAT75_OLED_LARGE
@@ -61,18 +74,25 @@
 uint32_t s75_days_from_civil(int16_t y, uint8_t m, uint8_t d);
 uint8_t  s75_day_of_week(int16_t year, uint8_t month, uint8_t day);
 
-#ifdef OLED_ENABLE
+#ifdef QUANTUM_PAINTER_ENABLE
+
+// --- display ----------------------------------------------------------
+void s75_display_init(void);
+// Redraws and pushes the screen as needed.  Call from housekeeping_task_kb().
+void s75_display_task(void);
 
 // --- primitives -------------------------------------------------------
 void s75_draw_line_h(uint8_t x, uint8_t y, uint8_t len);
 void s75_draw_line_v(uint8_t x, uint8_t y, uint8_t len);
 void s75_fill_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h);
+// Bitmap data in the OLED controller's page layout, drawn at the origin.
+void s75_draw_raw(const uint8_t *data, uint16_t size);
 
 /*
  * Seven-segment digit rendering, for screens where the stock 6x8 font is too
  * small to read at a glance.  Segments are drawn as filled rectangles, so the
  * digits scale to whatever size the caller asks for and are not tied to the
- * text grid -- unlike oled_set_cursor(), y may be any pixel row.
+ * text grid -- unlike s75_set_cursor(), y may be any pixel row.
  *
  * The string may contain '0'-'9', ':' and ' '.  Every glyph advances by the
  * same amount so digits never shift as the value changes; ' ' renders as a
@@ -81,9 +101,23 @@ void s75_fill_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h);
 void    s75_draw_7seg(const char *s, uint8_t x, uint8_t y, uint8_t digit_w, uint8_t digit_h, uint8_t thickness);
 uint8_t s75_7seg_width(const char *s, uint8_t digit_w, uint8_t thickness);
 
+// --- text --------------------------------------------------------------
+
+/*
+ * A character-grid text layer over the 6x8 glcdfont, with the cursor, advance
+ * and wrapping rules of the old OLED driver's oled_set_cursor()/oled_write(),
+ * so the screen layouts carry over unchanged.  Inverted text is drawn white
+ * on black by swapping the colours, which covers the full 6px cell.
+ */
+void s75_set_cursor(uint8_t col, uint8_t row);
+void s75_write(const char *str, bool invert);
+void s75_write_char(char c, bool invert);
+void s75_advance_char(void);
+void s75_write_pixel(uint8_t x, uint8_t y, bool on);
+
 // --- shared text helpers ----------------------------------------------
 char *s75_get_enc_mode(void);
 char *s75_get_time(void);
 char *s75_get_date(void);
 
-#endif // OLED_ENABLE
+#endif // QUANTUM_PAINTER_ENABLE

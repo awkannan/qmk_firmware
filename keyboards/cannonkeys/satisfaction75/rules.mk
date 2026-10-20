@@ -6,4 +6,8 @@ SRC += satisfaction_encoder.c \
       satisfaction_oled.c \
       satisfaction_bongo.c \
       satisfaction_pomodoro.c \
-      satisfaction_core.c 
+      satisfaction_core.c
+
+# The OLED is driven through Quantum Painter
+QUANTUM_PAINTER_ENABLE = yes
+QUANTUM_PAINTER_DRIVERS += sh1106_i2c

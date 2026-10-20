@@ -30,7 +30,6 @@
 #    include "matrix.h"
 #    include "timer.h"
 #    include "progmem.h"
-#    include "oled_driver.h"
 #    include <stdio.h>
 
 #    ifdef WPM_ENABLE
@@ -1036,16 +1035,16 @@ static void draw_bongo_overlay(void) {
 #    ifdef WPM_ENABLE
     char wpm_str[9];
     snprintf(wpm_str, sizeof(wpm_str), "WPM %03u", (unsigned)get_current_wpm());
-    oled_set_cursor(0, 0);
-    oled_write(wpm_str, false);
+    s75_set_cursor(0, 0);
+    s75_write(wpm_str, false);
 #    endif
 
 #    ifdef SAT75_OLED_LARGE
-    oled_set_cursor(14, 0);
+    s75_set_cursor(14, 0);
 #    else
-    oled_set_cursor(0, 2);
+    s75_set_cursor(0, 2);
 #    endif
-    oled_write(s75_get_time(), false);
+    s75_write(s75_get_time(), false);
 }
 
 void draw_bongo(bool minimal) {
@@ -1073,8 +1072,7 @@ void draw_bongo(bool minimal) {
             break;
     }
 
-    oled_set_cursor(0, 0);
-    oled_write_raw_P(frame, BONGO_ANIM_SIZE);
+    s75_draw_raw((const uint8_t *)frame, BONGO_ANIM_SIZE);
 
     if (!minimal) {
         draw_bongo_overlay();

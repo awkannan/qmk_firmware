@@ -69,18 +69,9 @@ uint32_t write_custom_config(const void *data, uint32_t offset, uint32_t length)
 void keyboard_post_init_kb(void) {
     custom_config_load();
 
-      /*
-        This is a workaround to some really weird behavior
-        Without this code, the OLED will turn on, but not when you initially plug the keyboard in.
-        You have to manually trigger a user reset to get the OLED to initialize properly
-        I'm not sure what the root cause is at this time, but this workaround fixes it.
-    */
-    #ifdef OLED_ENABLE
-    if(!is_oled_on()){
-        wait_ms(3000);
-        oled_init(SAT75_OLED_ROTATION);
-    }
-    #endif
+#ifdef QUANTUM_PAINTER_ENABLE
+    s75_display_init();
+#endif
 
     keyboard_post_init_user();
 }
@@ -359,5 +350,9 @@ void housekeeping_task_kb(void) {
 #ifdef SAT75_POMODORO
   // Runs regardless of which screen is showing; OLED_POMODORO is only a view.
   pomodoro_task();
+#endif
+
+#ifdef QUANTUM_PAINTER_ENABLE
+  s75_display_task();
 #endif
 }

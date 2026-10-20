@@ -9,7 +9,6 @@
 #    include "satisfaction_oled.h"
 #    include "timer.h"
 #    include "progmem.h"
-#    include "oled_driver.h"
 #    include <stdio.h>
 
 #    define POMODORO_MINUTES(n) ((uint16_t)(n) * 60u)
@@ -209,7 +208,7 @@ void draw_pomodoro_line(void) {
              (unsigned)(remaining / 60), (unsigned)(remaining % 60), (unsigned)round_no, (unsigned)POMODORO_ROUNDS);
 
     if (blink_visible()) {
-        oled_write(buf, pending);
+        s75_write(buf, pending);
     }
 }
 
@@ -230,11 +229,11 @@ void draw_pomodoro(void) {
     countdown_digits(digits, sizeof(digits));
 
 #        ifdef SAT75_OLED_LARGE
-    oled_set_cursor(0, 0);
-    oled_write_P(PSTR("POMODORO"), false);
+    s75_set_cursor(0, 0);
+    s75_write("POMODORO", false);
     snprintf(header, sizeof(header), "%u/%u", (unsigned)round_no, (unsigned)POMODORO_ROUNDS);
-    oled_set_cursor(18, 0);
-    oled_write(header, false);
+    s75_set_cursor(18, 0);
+    s75_write(header, false);
 
     if (blink_visible()) {
         uint8_t w = s75_7seg_width(digits, POMO_DIGIT_W, POMO_THICK);
@@ -248,24 +247,24 @@ void draw_pomodoro(void) {
         while (name[len]) {
             len++;
         }
-        oled_set_cursor((uint8_t)((SAT75_TEXT_COLS - len) / 2), 6);
-        oled_write(name, pending);
+        s75_set_cursor((uint8_t)((SAT75_TEXT_COLS - len) / 2), 6);
+        s75_write(name, pending);
     }
 
     if (!running && !pending) {
-        oled_set_cursor(0, 6);
-        oled_write_P(PSTR("PAUSED"), false);
+        s75_set_cursor(0, 6);
+        s75_write("PAUSED", false);
     }
 
     draw_progress_bar(0, 58, SAT75_CANVAS_WIDTH, 6);
 #        else
     snprintf(header, sizeof(header), "%s %u/%u", phase_name(true), (unsigned)round_no, (unsigned)POMODORO_ROUNDS);
-    oled_set_cursor(0, 0);
-    oled_write(header, pending);
+    s75_set_cursor(0, 0);
+    s75_write(header, pending);
 
     if (!running && !pending) {
-        oled_set_cursor(15, 0);
-        oled_write_P(PSTR("PAUSED"), false);
+        s75_set_cursor(15, 0);
+        s75_write("PAUSED", false);
     }
 
     if (blink_visible()) {

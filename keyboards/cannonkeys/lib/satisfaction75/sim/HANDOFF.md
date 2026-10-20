@@ -1,16 +1,73 @@
-# satisfaction75 large-OLED work — status
+# satisfaction75 OLED work — status
 
-Branch: `202608_sat75_big_screen` (off `202508_sat75_big_bongo`).
+Branch: `202610_sat75_quantum_painter` (off `202608_sat75_big_screen`, which is
+off `202508_sat75_big_bongo`).
 
-Goal: make `keyboards/cannonkeys/lib/satisfaction75` drive both the original
-128x32 OLED and the 64x128 panel on `satisfaction75_big_hs`, rework the bongo
-cat for both, and add a silent pomodoro timer.
+Goal of the parent branch: make `keyboards/cannonkeys/lib/satisfaction75`
+drive both the original 128x32 OLED and the 64x128 panel on
+`satisfaction75_big_hs`, rework the bongo cat for both, and add a silent
+pomodoro timer.
+
+Goal of this branch: the same screens, driven through **Quantum Painter**
+instead of QMK's OLED driver. Every board in the family switches over; the
+OLED-driver version stays on the parent branch.
 
 **Everything that can be checked without the physical keyboard has been.** All
-eleven board/keymap combinations compile and link, the simulator's golden
-snapshots pass at both canvas sizes, and the calendar arithmetic is
-cross-checked against a reference. What is left needs hardware; see the bottom
-of this file.
+eleven board/keymap combinations compile and link under `-Werror`, and every
+screen in the simulator is pixel-identical to the OLED-driver version at both
+canvas sizes. What is left needs hardware; see the bottom of this file.
+
+## The Quantum Painter port
+
+**Drivers.** The 128x32 SSD1306 uses QP's `sh1106_i2c` driver (QP documents the
+two as indistinguishable); the 64x128 SH1107 uses `sh1107_i2c`. A board selects
+the large panel with `SAT75_OLED_LARGE` in config.h plus the `sh1107_i2c`
+driver in rules.mk; `OLED_DISPLAY_64X128` is gone along with the OLED driver.
+
+**Rotation is `QP_ROTATION_270` on the large panel, not 90.** Worked through
+from both drivers' code: the old `OLED_ROTATION_90` path (`rotate_90()`, the
+source/target maps, `calc_bounds_90()`) puts logical (x,y) at panel column y,
+row 127-x. QP's `flush_rot270` does exactly that; `flush_rot90` would be
+upside down. The SH1107 init sequences match (mux 63, display offset 32, COM
+pins alt, segment remap inverted, COM scan decreasing).
+
+**Init additions.** QP's init leaves contrast at 0x7F and does not set
+precharge or VCOM, so `panel_setup[]` in `satisfaction_oled.c` sends the old
+driver's values (0xFF, 0xF1, 0x20). On the SSD1306 it also forces page
+addressing mode: QP only ever uses page addressing, and the old driver set
+horizontal mode, which survives a DFU reflash because the panel stays
+powered. The 3s blocking re-init in `keyboard_post_init_kb()` became a one-off
+non-blocking re-init at 3s of uptime.
+
+**Rendering.** Each repaint draws the whole screen into an offscreen 1bpp
+surface, then copies it to the panel driver's framebuffer one controller page
+per main loop pass, flushing after each. That framebuffer only marks pixels
+that actually change, so unchanged screens send nothing and a key press on the
+default screen sends one page. `qp_flush()` is synchronous; one page per pass
+bounds the I2C stall to roughly what the old driver sent per pass. A new frame
+is only drawn once the previous one is fully pushed, which removes the
+stale-bottom-rows bug by construction (see "render bandwidth" below for the
+history).
+
+**Text** goes through a small character-grid layer (`s75_set_cursor()`,
+`s75_write()`, ...) that keeps the OLED driver's cursor, advance and wrap
+rules, drawing with a QFF conversion of QMK's own 6x8 glcdfont, so every
+layout carried over unchanged. `assets/make_font_image.py` regenerates it.
+
+**Bongo art** stays in the OLED page format and is drawn with `qp_viewport()`
+plus `qp_pixdata()` one column byte at a time (`s75_draw_raw()`). Converting it
+to QGF would have meant a second copy of 8K+ of sprite data for no visual
+change.
+
+**QP config.** `QUANTUM_PAINTER_DISPLAY_TIMEOUT 0` (the lib has its own sleep
+timer and the OLED_OFF mode), minimal image/font/animation slots, and a 32
+byte pixdata buffer. Animations stay compiled in because this tree's QP fails
+to link with `QUANTUM_PAINTER_ANIMATIONS_ENABLE = no`
+(`qp_internal_animation_tick()` calls deferred_exec unconditionally).
+
+**Font sources in `post_rules.mk`.** It runs after the keymap's rules.mk, so
+`rev1:tester` can still set `QUANTUM_PAINTER_ENABLE = no`; a conditional in
+the board rules.mk would run too early to see that.
 
 ## Build environment (already set up on this machine)
 
@@ -44,19 +101,23 @@ anyway.
 Eleven combinations, all clean. Five boards -- keymaps live partly at the
 `satisfaction75/` parent level and are shared across its revisions.
 
-| Board | Keymap | Flash /128K | RAM /16K |
-|---|---|---|---|
-| satisfaction75/prototype | default | 39372  30.0% | 10640  64.9% |
-| satisfaction75/prototype | bongo   | 53432  40.8% | 11404  69.6% |
-| satisfaction75/rev1      | default | 39372  30.0% | 10640  64.9% |
-| satisfaction75/rev1      | bongo   | 53432  40.8% | 11404  69.6% |
-| satisfaction75/rev1      | tester  | 32360  24.7% |  9520  58.1% |
-| satisfaction75/rev2      | default | 39388  30.1% | 10640  64.9% |
-| satisfaction75/rev2      | bongo   | 53068  40.5% | 11404  69.6% |
-| satisfaction75_hs        | default | 38984  29.7% | 10912  66.6% |
-| satisfaction75_hs        | bongo   | 52456  40.0% | 11676  71.3% |
-| satisfaction75_big_hs    | default | 41712  31.8% | 12052  73.6% |
-| satisfaction75_big_hs    | bongo   | 51824  39.5% | 12748  77.8% |
+| Board | Keymap | Flash /128K | RAM /16K | vs. OLED driver (flash, RAM) |
+|---|---|---|---|---|
+| satisfaction75/prototype | default | 44736  34.1% | 11588  70.7% | +5364, +948 |
+| satisfaction75/prototype | bongo   | 58804  44.9% | 12352  75.4% | +5372, +948 |
+| satisfaction75/rev1      | default | 44736  34.1% | 11588  70.7% | +5364, +948 |
+| satisfaction75/rev1      | bongo   | 58804  44.9% | 12352  75.4% | +5372, +948 |
+| satisfaction75/rev1      | tester  | 32360  24.7% |  9520  58.1% | unchanged (no screen) |
+| satisfaction75/rev2      | default | 44752  34.1% | 11588  70.7% | +5364, +948 |
+| satisfaction75/rev2      | bongo   | 58440  44.6% | 12352  75.4% | +5372, +948 |
+| satisfaction75_hs        | default | 44004  33.6% | 11860  72.4% | +5020, +948 |
+| satisfaction75_hs        | bongo   | 57484  43.9% | 12632  77.1% | +5028, +956 |
+| satisfaction75_big_hs    | default | 46492  35.5% | 13492  82.3% | +4780, +1440 |
+| satisfaction75_big_hs    | bongo   | 56572  43.2% | 14188  86.6% | +4748, +1440 |
+
+RAM is the one to watch. On the large panel QP's SH1107 driver reserves a
+fixed 128x128 framebuffer (2K) whatever the panel size, so half of it is
+unused here, on top of the 1K offscreen canvas.
 
 Flash is `.vectors + .text + .rodata + .ARM.exidx + .data`; RAM is
 `.mstack + .pstack + .data + .bss`. Plain `arm-none-eabi-size` without `-A`
@@ -86,21 +147,24 @@ and runs at `-O1`. `-Wformat-truncation` caught a `char[8]` that
 `"%02u:%02u"` could overrun, because `minute_config` is a user-editable
 `int16_t` that GCC cannot bound. Host gcc never flagged it.
 
-The first flash then found a third: **render bandwidth**. Every repaint
+The first flash then found a third: **render bandwidth** (OLED-driver version;
+the QP pipeline described above replaces this fix). Every repaint
 starts from `oled_clear()`, which marks all 16 blocks dirty, and the driver
 sends one block per main loop pass, lowest first. On the SH1107 a 64-byte block
 is eight page-mode command+data pairs at ~400kHz, so a full screen takes about
 as long as the 66ms repaint interval. Each repaint re-dirtied block 0 before the
 tail was reached, so the bottom two text rows never updated and kept the
-previous screen. `repaint()` in `satisfaction_oled.c` now snapshots the buffer
-(1K on the large panel, 512 bytes on the small), redraws, and narrows
-`oled_dirty` to blocks that actually changed. The sim now models the dirty
-mask and the panel's own RAM, reports blocks sent per frame, and has a
-fixed-budget scenario that fails with `STALE BLOCKS ... 0xf000` on the old code.
+previous screen. The parent branch fixed it by snapshotting the buffer and
+narrowing `oled_dirty` to blocks that actually changed. This branch never
+draws a new frame until the last one is fully pushed, so the failure cannot
+recur; the sim's `bandwidth_scenario()` reports what each frame sends instead
+of the old fixed-budget starvation test.
 
 So: a green `make test` means the layouts and logic are right. It says nothing
-about includes, warnings, `rotate_90()`, the SH1107 command stream, I2C timing,
-or flash usage. Run a real compile before believing a change is done.
+about includes, warnings, the panel init and rotation, I2C timing, or flash
+usage. Run a real compile before believing a change is done. (On this branch
+the sim compiles real Quantum Painter, so the drawing code is the same code
+that runs on the board; the panel is the stand-in.)
 
 ## Design decisions worth not re-litigating
 
@@ -108,13 +172,15 @@ or flash usage. Run a real compile before believing a change is done.
 `OLED_ROTATION_90` unconditionally. That is right for the 64x128 panel and
 breaks every 128x32 board, because rotation 90 makes the logical canvas 32 wide
 and 128 tall, so every cursor column and pixel coordinate lands wrong. It is now
-`SAT75_OLED_ROTATION`, derived per panel, and the sim asserts it.
+`SAT75_PANEL_ROTATION`, derived per panel (and on this branch it is a QP
+rotation; see the port section for why the large panel is 270).
 
 **Both panels are 128 logical px wide.** Small is 128x32 (21x4 chars), large is
 128x64 (21x8). That is why the split is cheap: same width, double the height.
 
-**`SAT75_OLED_LARGE` is derived from `OLED_DISPLAY_64X128`**, the same macro the
-OLED driver keys off, so the layout and the panel config cannot drift apart.
+**`SAT75_OLED_LARGE` selects the large panel.** On the parent branch it was
+derived from the OLED driver's `OLED_DISPLAY_64X128`; with that driver gone,
+the board defines it directly, next to choosing `sh1107_i2c` in rules.mk.
 
 **Both panels have an `OLED_TIME` mode**, and on both `draw_clock()` serves
 double duty: it is the browsable clock screen, and it is the `clock_set_mode`
@@ -182,16 +248,23 @@ opt in with one define in a keymap config.h.
 
 Nothing else is blocking. In priority order:
 
-1. **A small-screen board is visually unchanged.** Highest risk. The sim says
-   the output is byte-identical to the pre-rework baseline, but it models the
-   post-rotation canvas and so never exercises the driver's rotation path.
-2. **The large panel renders upright and unmirrored.** `rotate_90()`,
-   `OLED_SOURCE_MAP`/`OLED_TARGET_MAP` and the SH1107 init are all untested. If
-   the big screen is scrambled, look there, not at the layout code.
-3. **The bongo animates smoothly on the large panel.** 1024 bytes per frame
-   instead of 512, plus a rotation pass per block. `oled_render()` runs from the
-   main loop rather than the 66ms task so it should keep up, but tearing would
-   show here first.
+1. **Both panels light up at all, the right way up.** Highest risk: nothing
+   below the panel framebuffer has run. The sim proves the screens are
+   pixel-identical to the OLED-driver version up to that point; the QP
+   controller init, `QP_ROTATION_270` on the SH1107 and the page/column
+   commands are reasoned from the code, not observed. If the big screen is
+   upside down, mirrored or offset, try the other rotations in
+   `SAT75_PANEL_ROTATION` before touching any layout code. If the small screen
+   shows garbage after reflashing from the OLED-driver firmware, power-cycle
+   it once to rule out leftover controller state.
+2. **Brightness matches.** `panel_setup[]` restores the old contrast,
+   precharge and VCOM; compare against a board still on the old firmware.
+3. **Typing feels the same with the bongo up.** A bongo frame changes most of
+   the screen, so most pages are flushed, each a blocking I2C transfer of up to
+   ~130 bytes. One page per main loop pass should keep each stall around a
+   few ms, but check for missed or late keys while typing fast on the large
+   panel, which has 16 pages to the small one's 4. The per-column
+   `s75_draw_raw()` blit is the other CPU cost to watch there.
 4. **The pomodoro against a real RTC.** The sim's RTC is a hand-written fake, so
    it proves the arithmetic, not that ChibiOS populates `RTCDateTime` the way
    this code assumes. Leave a phase running for a real 25 minutes and compare
@@ -210,12 +283,14 @@ removing or relocating before anything goes near an upstream QMK PR.
 ## File map
 
 ```
-satisfaction_oled.h         canvas size defines, drawing + calendar API
-satisfaction_oled.c         mode dispatch, primitives, 7-segment, both layouts
+satisfaction_oled.h         canvas/panel defines, display, drawing, text + calendar API
+satisfaction_oled.c         QP setup, render/push pipeline, primitives, text layer,
+                            7-segment, mode dispatch, both layouts
 satisfaction_bongo.{c,h}    sprite data + animation state machine
 satisfaction_pomodoro.{c,h} timer state machine + its two layouts
-satisfaction_core.{c,h}     unchanged except rotation, EEPROM clamp, pomo hooks
-sim/                        host-side simulator
+satisfaction_core.{c,h}     unchanged except display init/task hooks, EEPROM clamp, pomo hooks
+assets/                     glcdfont as a QP font, and the script that makes it
+sim/                        host-side simulator, on real Quantum Painter
 ```
 
 `bongo.h` is gone; it defined non-static globals and 8K of sprite data in a
